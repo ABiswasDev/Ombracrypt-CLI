@@ -1,6 +1,27 @@
 [package]
 name = "ombracrypt-cli"
-version = "0.1.0"
-edition = "2024"
+version = "0.4.3"
+description = "The zero-trust quantum vault, built for the terminal."
+authors = ["Abhishek Biswas"]
+edition = "2021"
 
 [dependencies]
+# CLI Integration
+clap = { version = "4.5", features = ["derive"] }
+inquire = "0.7" # Replaced dialoguer to enable *** password masking
+indicatif = "0.17"
+colored = "2.1"
+
+# Core Cryptography Engine
+tar = "0.4.40"
+chacha20poly1305 = "0.10.1"
+aes-gcm = "0.10.3"
+rand = "0.8.5"
+argon2 = "0.5.3"
+sha2 = "0.10.8"
+
+# Post-Quantum KEM Dependencies
+x25519-dalek = { version = "2.0.1", features = ["static_secrets"] }
+pqcrypto-kyber = "0.8.1"
+pqcrypto-traits = "0.3.5"
+zeroize = "1.8.1"
