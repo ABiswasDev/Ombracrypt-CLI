@@ -1,0 +1,54 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*' # Triggers the pipeline only when you push a version tag (e.g., v0.4.3)
+
+permissions:
+  contents: write # Required to allow GitHub Actions to publish the release
+
+jobs:
+  build:
+    name: Build for ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact_name: ombracrypt-cli
+            asset_name: ombracrypt-cli-linux-x64.tar.gz
+          - os: macos-latest
+            artifact_name: ombracrypt-cli
+            asset_name: ombracrypt-cli-macos-x64.tar.gz
+          - os: windows-latest
+            artifact_name: ombracrypt-cli.exe
+            asset_name: ombracrypt-cli-windows-x64.zip
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build release binary
+        run: cargo build --release
+
+      - name: Package for Linux & macOS
+        if: runner.os != 'Windows'
+        run: |
+          cd target/release
+          tar -czvf ../../${{ matrix.asset_name }} ${{ matrix.artifact_name }}
+
+      - name: Package for Windows
+        if: runner.os == 'Windows'
+        run: |
+          cd target/release
+          Compress-Archive -Path ${{ matrix.artifact_name }} -DestinationPath ..\..\${{ matrix.asset_name }}
+
+      - name: Publish to GitHub Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ matrix.asset_name }}
+          generate_release_notes: true
