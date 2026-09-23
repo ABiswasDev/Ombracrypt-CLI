@@ -36,10 +36,14 @@ pub fn encrypt_vault(
         let _ = fs::remove_file(&temp_tar_path);
         return Err(format!("Failed to bundle folder: {}", e));
     }
-    if let Err(e) = archive.finish() {
+    
+    // CRITICAL FIX: Extract the raw file handle, force an OS hardware sync, and drop the lock
+    let tar_file_handle = archive.into_inner().map_err(|e| {
         let _ = fs::remove_file(&temp_tar_path);
-        return Err(format!("Failed to finish archive: {}", e));
-    }
+        format!("Failed to finish archive: {}", e)
+    })?;
+    tar_file_handle.sync_all().map_err(|e| format!("Failed to sync archive to hardware: {}", e))?;
+    drop(tar_file_handle);
 
     println!(" {} {}", "[+]".cyan(), "Synthesizing Hybrid Post-Quantum Keys...".bright_black());
     let (argon_key, salt) = crypto::derive_key(main_pin)?;
@@ -275,7 +279,11 @@ pub fn decrypt_vault(
     }
 
     pb.set_message("Flushing to disk...");
-    tar_file_write.flush().map_err(|e| e.to_string())?;
+    
+    // CRITICAL FIX: Upgrade flush() to sync_all() and release the write lock
+    tar_file_write.sync_all().map_err(|e| e.to_string())?;
+    drop(tar_file_write);
+    
     pb.finish_with_message("Done!");
 
     println!(" {} {}", "[+]".cyan(), "Unpacking vault contents...".bright_black());

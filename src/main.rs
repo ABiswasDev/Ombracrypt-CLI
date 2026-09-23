@@ -9,7 +9,7 @@ mod pipeline;
 
 #[derive(Parser)]
 #[command(name = "ombracrypt")]
-#[command(version = "0.4.3")]
+#[command(version = "0.4.4")]
 #[command(about = "The zero-trust quantum vault, built for the terminal.", long_about = None)]
 struct Cli {
     #[command(subcommand)]
@@ -25,11 +25,11 @@ enum Commands {
         target: String,
 
         /// Symmetric cipher: 'aes256gcm' or 'xchacha20'
-        #[arg(short, long, default_value = "aes256gcm")]
+        #[arg(short, long, value_parser = ["aes256gcm", "xchacha20"], default_value = "aes256gcm")]
         cipher: String,
 
-        /// KEM Profile: 'standard' or 'cypherpunk'
-        #[arg(short, long, default_value = "cypherpunk")]
+        /// KEM Profile: 'xwing' or 'cypherpunk'
+        #[arg(short, long, value_parser = ["xwing", "cypherpunk"], default_value = "cypherpunk")]
         kem: String,
     },
     /// Decrypt a Quantum-Safe Vault (.obv) using your Ombracrypt Key (.obk)
@@ -46,6 +46,7 @@ enum Commands {
 
 fn print_header(mode: &str, target: &str) {
     println!("\n{} {}", "::".magenta(), "OMBRACRYPT QUANTUM VAULT".bold().cyan());
+    println!("   {}", "Copyright © 2026 Abhishek Biswas (Ombraveil). All rights reserved.".bright_black());
     println!("{}", "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━".bright_black());
     println!("{} {}", "▶ Operation:".bright_black(), mode.bold().green());
     println!("{} {}", "▶ Target:   ".bright_black(), target.bold());
@@ -60,7 +61,7 @@ fn main() {
             print_header("Encrypt (Lock)", target);
             
             let main_pin = loop {
-                let pin = Password::new("? Enter Master Password:")
+                let pin = Password::new("Enter Master Password:")
                     .with_display_mode(PasswordDisplayMode::Masked)
                     .without_confirmation()
                     .prompt()
@@ -71,7 +72,7 @@ fn main() {
                     continue;
                 }
 
-                let confirm = Password::new("? Confirm Master Password:")
+                let confirm = Password::new("Confirm Master Password:")
                     .with_display_mode(PasswordDisplayMode::Masked)
                     .without_confirmation()
                     .prompt()
@@ -84,7 +85,7 @@ fn main() {
             };
                 
             let deception_passcode = loop {
-                let d_pin = Password::new("? Enter Deception Passcode (Press ENTER to skip):")
+                let d_pin = Password::new("Enter Deception Passcode (Press ENTER to skip):")
                     .with_display_mode(PasswordDisplayMode::Masked)
                     .without_confirmation()
                     .prompt()
@@ -123,7 +124,7 @@ fn main() {
         Commands::Decrypt { target, key } => {
             print_header("Decrypt (Unlock)", target);
             
-            let main_pin = Password::new("? Enter Master Password:")
+            let main_pin = Password::new("Enter Master Password:")
                 .with_display_mode(PasswordDisplayMode::Masked)
                 .without_confirmation()
                 .prompt()

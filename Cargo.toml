@@ -1,6 +1,6 @@
 [package]
 name = "ombracrypt-cli"
-version = "0.4.3"
+version = "0.4.4"
 description = "The zero-trust quantum vault, built for the terminal."
 authors = ["Abhishek Biswas"]
 edition = "2021"
