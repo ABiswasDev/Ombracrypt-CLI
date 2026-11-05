@@ -257,8 +257,12 @@ ombracrypt keygen --name "infrastructure_cold" --output-dir "/keys" --kem cypher
 ```
 
 ### Resulting Files:
-* `alice.obp` (Public Sealing Key, 1,222 bytes) — Shareable with anyone who needs to encrypt files for Alice.
-* `alice.obk` (Private Decapsulation Key, 86 bytes) — Kept offline and secret by Alice.
+* **X-Wing Profile (Default):**
+  * `<NAME>.obp` (Public Sealing Key, **1,222 bytes**) — Shareable with anyone who needs to encrypt files for you.
+  * `<NAME>.obk` (Private Decapsulation Key, **86 bytes**) — Kept offline and secret, permissions restricted to `0600`.
+* **Cypherpunk Profile (`--kem cypherpunk`):**
+  * `<NAME>.obp` (Public Sealing Key, **1,606 bytes**).
+  * `<NAME>.obk` (Private Decapsulation Key, **3,254 bytes**) — Encapsulates full ML-KEM-1024 decapsulation key $d_k$ (3,168 B) + X25519 static private key (32 B) + metadata and phantom duress block. Restricted to `0600`.
 
 ```plaintext
 :: OMBRACRYPT QUANTUM VAULT [v2.0.0]
@@ -280,23 +284,28 @@ ombracrypt keygen --name "infrastructure_cold" --output-dir "/keys" --kem cypher
 
 Ombracrypt uses isolated staging directories (`.ombracrypt_stage_<STEM>_<UUID>/`) guarded by OS-level file locks (`.active.lock`) to ensure transactional atomicity. If a machine experiences sudden power loss, hardware shutdown, or forceful termination (`kill -9`), orphaned staging remnants may remain.
 
-The `clean` command inspects target folders, checks advisory locks, and safely purges stale remnants without touching active transfers:
+The `clean` command inspects target folders, checks advisory locks, and safely purges stale remnants without touching active transfers. It supports passing multiple targets, automatically deduplicates paths, and resolves file paths to their parent directories:
 
 ```bash
 # Clean current directory
 ombracrypt clean
 
-# Clean a specific backup or mount directory
-ombracrypt clean --target-dir "/mnt/secure_backup"
+# Clean multiple directories at once
+ombracrypt clean -d "/mnt/backup1" -d "/mnt/backup2" -d "/data"
+
+# Pass files directly (clean resolves to their parent directories)
+ombracrypt clean -d "/mnt/backup1/vault.obv"
 ```
 
 ```plaintext
-▶ Scanning directory for orphaned staging artifacts: /mnt/secure_backup
+▶ Scanning directory for orphaned staging artifacts: /mnt/backup1
+▶ Scanning directory for orphaned staging artifacts: /mnt/backup2
+▶ Scanning directory for orphaned staging artifacts: /data
 ✔ Successfully cleaned 2 staging artifact(s) (148.20 MB reclaimed).
 ```
 
 > [!NOTE]
-> The cleaner strictly verifies that the directory matches Ombracrypt staging naming conventions, verifies that no other running process holds `.active.lock`, and preserves all non-staging files and symlinks.
+> The cleaner strictly verifies that the directory matches Ombracrypt staging naming conventions, verifies that no other running process holds `.active.lock`, and preserves all non-staging files and symlinks. Silent mode (`-q / --quiet`) suppresses all terminal output.
 
 ---
 
@@ -415,8 +424,9 @@ echo "[✓] Backup completed successfully."
 * **Note:** If the Duress Trapdoor was previously activated on this key, the header has been permanently overwritten with random noise.
 
 ### "Operation aborted by user"
-* **Cause:** A `SIGINT` (Ctrl+C) signal was received.
-* **Safety:** Ombracrypt immediately intercepts cancellation, aborts file streaming, closes handles, and triggers rollback guards to delete incomplete staging artifacts. Run `ombracrypt clean` if necessary.
+* **Cause:** A termination signal was received (e.g. `SIGINT` via Ctrl+C, `SIGTERM`, or `SIGHUP`).
+* **Cooperative Rollback:** Ombracrypt intercepts the signal non-blockingly via an atomic barrier. It halts chunk streaming, closes active file handles, and triggers `CommitRollbackGuard` and `TempFileGuard`/`TempDirGuard` to cleanly delete incomplete `.ombracrypt_stage_*` staging files before process termination.
+* **Uncatchable Signals:** Uncatchable terminations (such as `SIGKILL` / `kill -9` or sudden power outages) cannot run user-space signal handlers; any abandoned staging folders from such events can be swept at any time by running `ombracrypt clean`.
 
 ---
 

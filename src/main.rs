@@ -5,7 +5,9 @@ use inquire::{Password, PasswordDisplayMode};
 use ombracrypt::{fs_guard, pipeline};
 use std::io::{stdin, IsTerminal};
 use std::path::{Path, PathBuf};
-use std::process;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use zeroize::{Zeroize, Zeroizing};
 
 #[derive(Parser)]
 #[command(name = "ombracrypt")]
@@ -168,9 +170,9 @@ enum Commands {
 
     /// Reclaim and purge orphaned Ombracrypt staging directories (.ombracrypt_stage_*)
     Clean {
-        /// Target folder to inspect and clean [default: current directory]
-        #[arg(short = 'd', long)]
-        target_dir: Option<PathBuf>,
+        /// Target folder(s) to inspect and clean [default: current directory]
+        #[arg(short = 'd', long = "target-dir", action = clap::ArgAction::Append)]
+        target_dirs: Vec<PathBuf>,
 
         /// Suppress output unless errors occur
         #[arg(short, long)]
@@ -231,39 +233,53 @@ fn fetch_credential(
     custom_env: Option<&str>,
     default_env: &str,
     is_optional: bool,
-) -> Result<String, String> {
+) -> Result<Zeroizing<String>, String> {
     // 1. Direct file input
     if let Some(path) = file_path {
-        let content = std::fs::read_to_string(path)
+        let mut raw_bytes = std::fs::read(path)
             .map_err(|e| format!("Failed to read credential file '{}': {}", path.display(), e))?;
-        return Ok(content.trim_end_matches(['\r', '\n']).to_string());
+        while let Some(&last) = raw_bytes.last() {
+            if last == b'\r' || last == b'\n' {
+                raw_bytes.pop();
+            } else {
+                break;
+            }
+        }
+        let s = String::from_utf8(raw_bytes).map_err(|e| {
+            let mut b = e.into_bytes();
+            b.zeroize();
+            "Credential file contains invalid UTF-8 bytes.".to_string()
+        })?;
+        return Ok(Zeroizing::new(s));
     }
 
     // 2. Custom environment variable
     if let Some(var_name) = custom_env {
         if let Ok(val) = std::env::var(var_name) {
-            return Ok(val);
+            return Ok(Zeroizing::new(val));
         }
     }
 
     // 3. Default environment variable
     if let Ok(val) = std::env::var(default_env) {
         if !val.is_empty() || is_optional {
-            return Ok(val);
+            return Ok(Zeroizing::new(val));
         }
     }
 
     // 4. Stdin pipe (non-TTY automated environment)
     if !stdin().is_terminal() {
-        let mut buffer = String::new();
-        if stdin().read_line(&mut buffer).is_ok() {
-            let trimmed = buffer.trim_end_matches(['\r', '\n']).to_string();
-            if !trimmed.is_empty() || is_optional {
-                return Ok(trimmed);
+        let mut buffer = Zeroizing::new(String::new());
+        if stdin().read_line(&mut *buffer).is_ok() {
+            while buffer.ends_with('\n') || buffer.ends_with('\r') {
+                buffer.pop();
+            }
+            if !buffer.is_empty() || is_optional {
+                return Ok(buffer);
             }
         }
         if is_optional {
-            return Ok(String::new());
+            return Ok(Zeroizing::new(String::new()));
         }
         return Err("Required credential was not provided and standard input is not a terminal.".to_string());
     }
@@ -275,10 +291,11 @@ fn fetch_credential(
             .without_confirmation()
             .prompt()
             .map_err(|_| "Operation cancelled by user.".to_string())?;
+        let pass = Zeroizing::new(pass);
 
         if pass.trim().is_empty() {
             if is_optional {
-                return Ok(String::new());
+                return Ok(Zeroizing::new(String::new()));
             }
             eprintln!("{}", "✖ ERROR: Master Password cannot be blank or whitespace only!\n".red());
             continue;
@@ -290,8 +307,9 @@ fn fetch_credential(
                 .without_confirmation()
                 .prompt()
                 .map_err(|_| "Operation cancelled by user.".to_string())?;
+            let confirm = Zeroizing::new(confirm);
 
-            if pass != confirm {
+            if *pass != *confirm {
                 eprintln!("{}", "✖ ERROR: Passwords do not match. Please try again.\n".red());
                 continue;
             }
@@ -327,7 +345,7 @@ fn create_progress_reporter(quiet: bool) -> (Option<ProgressBar>, Box<dyn Fn(u8)
     (Some(pb), cb)
 }
 
-fn main() {
+fn run() -> Result<(), String> {
     let cli = Cli::parse();
 
     match cli.command {
@@ -359,50 +377,39 @@ fn main() {
             };
 
             // Ingest Master Password
-            let main_pin = match fetch_credential(
+            let main_pin = fetch_credential(
                 "Enter Master Password:",
                 Some("Confirm Master Password:"),
                 password_file.as_deref(),
                 password_env.as_deref(),
                 "OMBRACRYPT_PASSWORD",
                 false,
-            ) {
-                Ok(p) => p,
-                Err(e) => {
-                    eprintln!("{} {}\n", "✖ ERROR:".red(), e.red());
-                    process::exit(1);
-                }
-            };
+            )?;
 
             // Ingest Deception Passcode (only if generating keypair)
             let deception_passcode = if use_existing_public_key {
-                String::new()
+                Zeroizing::new(String::new())
             } else {
-                match fetch_credential(
+                let p = fetch_credential(
                     "Enter Deception Passcode (Press ENTER to skip):",
                     Some("Confirm Deception Passcode:"),
                     deception_passcode_file.as_deref(),
                     deception_passcode_env.as_deref(),
                     "OMBRACRYPT_DECEPTION_PASSCODE",
                     true,
-                ) {
-                    Ok(p) => {
-                        if !p.is_empty() && p == main_pin {
-                            eprintln!(
-                                "{} {}\n",
-                                "✖ CRITICAL ERROR:".red(),
-                                "Deception Passcode CANNOT match Master Password!".red()
-                            );
-                            process::exit(1);
-                        }
-                        p
-                    }
-                    Err(e) => {
-                        eprintln!("{} {}\n", "✖ ERROR:".red(), e.red());
-                        process::exit(1);
-                    }
+                )?;
+                if !p.is_empty() && *p == *main_pin {
+                    return Err("Deception Passcode CANNOT match Master Password!".to_string());
                 }
+                p
             };
+
+            // Set up cooperative signal cancellation handler immediately prior to encryption
+            let cancel_flag = Arc::new(AtomicBool::new(false));
+            let flag_clone = cancel_flag.clone();
+            let _ = ctrlc::set_handler(move || {
+                flag_clone.store(true, Ordering::Relaxed);
+            });
 
             if !quiet {
                 println!("{}", "▶ Initializing Streaming Cryptographic Pipeline...".bold().yellow());
@@ -420,15 +427,23 @@ fn main() {
                 &kem.to_string(),
                 &main_pin,
                 &deception_passcode,
-                None,
+                Some(cancel_flag.clone()),
                 Some(progress_ref),
             ) {
                 Ok(msg) => {
                     println!("\n{} {}\n", "✔".green(), msg.bold().green());
+                    Ok(())
                 }
                 Err(e) => {
-                    eprintln!("\n{} {}\n", "✖ ERROR:".red(), e.red());
-                    process::exit(1);
+                    if cancel_flag.load(Ordering::Relaxed) || e.contains("aborted by user") || e.contains("cancelled by user") {
+                        eprintln!(
+                            "\n{} Operation aborted by user. Any temporary staging artifacts were securely purged.\n",
+                            "[!]".yellow().bold()
+                        );
+                        Err("Operation aborted by user.".to_string())
+                    } else {
+                        Err(e)
+                    }
                 }
             }
         }
@@ -448,20 +463,21 @@ fn main() {
             let out_dir = resolve_smart_output_dir(&target, output_dir);
             let out_dir_str = out_dir.to_string_lossy().to_string();
 
-            let main_pin = match fetch_credential(
+            let main_pin = fetch_credential(
                 "Enter Master Password:",
                 None,
                 password_file.as_deref(),
                 password_env.as_deref(),
                 "OMBRACRYPT_PASSWORD",
                 false,
-            ) {
-                Ok(p) => p,
-                Err(e) => {
-                    eprintln!("{} {}\n", "✖ ERROR:".red(), e.red());
-                    process::exit(1);
-                }
-            };
+            )?;
+
+            // Set up cooperative signal cancellation handler immediately prior to decryption
+            let cancel_flag = Arc::new(AtomicBool::new(false));
+            let flag_clone = cancel_flag.clone();
+            let _ = ctrlc::set_handler(move || {
+                flag_clone.store(true, Ordering::Relaxed);
+            });
 
             if !quiet {
                 println!("{}", "▶ Authenticating Header & Initializing Decryption Engine...".bold().yellow());
@@ -475,15 +491,23 @@ fn main() {
                 Some(&key_str),
                 &out_dir_str,
                 &main_pin,
-                None,
+                Some(cancel_flag.clone()),
                 Some(progress_ref),
             ) {
                 Ok(msg) => {
                     println!("\n{} {}\n", "✔".green(), msg.bold().green());
+                    Ok(())
                 }
                 Err(e) => {
-                    eprintln!("\n{} {}\n", "✖ ERROR:".red(), e.red());
-                    process::exit(1);
+                    if cancel_flag.load(Ordering::Relaxed) || e.contains("aborted by user") || e.contains("cancelled by user") {
+                        eprintln!(
+                            "\n{} Operation aborted by user. Any temporary staging artifacts were securely purged.\n",
+                            "[!]".yellow().bold()
+                        );
+                        Err("Operation aborted by user.".to_string())
+                    } else {
+                        Err(e)
+                    }
                 }
             }
         }
@@ -501,67 +525,78 @@ fn main() {
             let out_dir = output_dir.unwrap_or_else(|| PathBuf::from("."));
             let out_dir_str = out_dir.to_string_lossy().to_string();
 
-            let deception_passcode = match fetch_credential(
+            let deception_passcode = fetch_credential(
                 "Enter Deception Passcode for Duress Trapdoor (Press ENTER to skip):",
                 Some("Confirm Deception Passcode:"),
                 deception_passcode_file.as_deref(),
                 deception_passcode_env.as_deref(),
                 "OMBRACRYPT_DECEPTION_PASSCODE",
                 true,
-            ) {
-                Ok(p) => p,
-                Err(e) => {
-                    eprintln!("{} {}\n", "✖ ERROR:".red(), e.red());
-                    process::exit(1);
-                }
-            };
+            )?;
 
-            match pipeline::generate_standalone_keypair(
+            let msg = pipeline::generate_standalone_keypair(
                 &out_dir_str,
                 &name,
                 &kem.to_string(),
                 &deception_passcode,
-            ) {
-                Ok(msg) => {
-                    println!("\n{} {}\n", "✔".green(), msg.bold().green());
-                }
-                Err(e) => {
-                    eprintln!("\n{} {}\n", "✖ ERROR:".red(), e.red());
-                    process::exit(1);
-                }
-            }
+            )?;
+            println!("\n{} {}\n", "✔".green(), msg.bold().green());
+            Ok(())
         }
 
-        Commands::Clean { target_dir, quiet } => {
-            let target = target_dir.unwrap_or_else(|| PathBuf::from("."));
-            if !quiet {
-                println!(
-                    "{} {}",
-                    "▶ Scanning directory for orphaned staging artifacts:".cyan(),
-                    target.display()
-                );
+        Commands::Clean { target_dirs, quiet } => {
+            let input_dirs = if target_dirs.is_empty() {
+                vec![PathBuf::from(".")]
+            } else {
+                target_dirs
+            };
+
+            let mut resolved_dirs: Vec<PathBuf> = Vec::new();
+            for path in input_dirs {
+                let dir = if path.is_file() {
+                    path.parent()
+                        .map(|p| if p.as_os_str().is_empty() { Path::new(".") } else { p })
+                        .unwrap_or(Path::new("."))
+                        .to_path_buf()
+                } else {
+                    path
+                };
+
+                let canon = dir.canonicalize().unwrap_or(dir);
+                if !resolved_dirs.contains(&canon) {
+                    resolved_dirs.push(canon);
+                }
             }
 
-            match fs_guard::clean_scoped_staging_dir(&target) {
-                Ok((count, freed_bytes)) => {
-                    if count == 0 {
-                        if !quiet {
-                            println!("{} Selected folder is clean (0 staging remnants found).", "✔".green());
-                        }
-                    } else {
-                        println!(
-                            "{} Successfully cleaned {} staging artifact(s) ({:.2} MB reclaimed).",
-                            "✔".green(),
-                            count,
-                            freed_bytes as f64 / 1_048_576.0
-                        );
-                    }
+            let mut total_count = 0usize;
+            let mut total_freed = 0u64;
+
+            for dir in &resolved_dirs {
+                if !quiet {
+                    println!(
+                        "{} {}",
+                        "▶ Scanning directory for orphaned staging artifacts:".cyan(),
+                        dir.display()
+                    );
                 }
-                Err(e) => {
-                    eprintln!("{} {}\n", "✖ ERROR:".red(), e.red());
-                    process::exit(1);
+                let (count, freed) = fs_guard::clean_scoped_staging_dir(dir)?;
+                total_count += count;
+                total_freed = total_freed.saturating_add(freed);
+            }
+
+            if !quiet {
+                if total_count == 0 {
+                    println!("{} Clean sweep finished (0 staging remnants found).", "✔".green());
+                } else {
+                    println!(
+                        "{} Successfully cleaned {} staging artifact(s) ({:.2} MB reclaimed).",
+                        "✔".green(),
+                        total_count,
+                        total_freed as f64 / 1_048_576.0
+                    );
                 }
             }
+            Ok(())
         }
 
         Commands::Inspect {
@@ -581,40 +616,45 @@ fn main() {
             let out_dir_str = out_dir.to_string_lossy().to_string();
             let key_str = key.as_ref().map(|k| k.to_string_lossy().to_string());
 
-            match fs_guard::assess_storage_and_paths(
+            let assessment = fs_guard::assess_storage_and_paths(
                 mode_str,
                 &target_str,
                 &out_dir_str,
                 key_str.as_deref(),
-            ) {
-                Ok(assessment) => {
-                    if json {
-                        let json_str = serde_json::to_string_pretty(&assessment)
-                            .unwrap_or_else(|_| "{}".to_string());
-                        println!("{}", json_str);
-                    } else {
-                        println!("\n{} {}", "::".magenta(), "OMBRACRYPT PRE-FLIGHT STORAGE ASSESSMENT".bold().cyan());
-                        println!("{}", "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━".bright_black());
-                        println!("{} {}", "▶ Mode:              ".bright_black(), mode_str.bold());
-                        println!("{} {}", "▶ Target:            ".bright_black(), target.display());
-                        println!("{} {}", "▶ Destination:       ".bright_black(), out_dir.display());
-                        println!("{} {:.2} MB", "▶ Required Free:     ".bright_black(), assessment.required_bytes as f64 / 1_048_576.0);
-                        println!("{} {:.2} MB", "▶ Available Free:    ".bright_black(), assessment.available_bytes as f64 / 1_048_576.0);
-                        println!("{} {}", "▶ Sufficient Space:  ".bright_black(), if assessment.sufficient { "YES".green().bold() } else { "NO".red().bold() });
-                        if let Some(ref conflict) = assessment.conflict_error {
-                            println!("{} {}", "▶ Conflict Detected: ".red().bold(), conflict.red());
-                        } else {
-                            println!("{} {}", "▶ Path Conflicts:    ".bright_black(), "None (Clear)".green());
-                        }
-                        println!("{} {}", "▶ Summary:           ".bright_black(), assessment.summary);
-                        println!("{}", "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n".bright_black());
-                    }
+            )?;
+
+            if json {
+                let json_str = serde_json::to_string_pretty(&assessment)
+                    .unwrap_or_else(|_| "{}".to_string());
+                println!("{}", json_str);
+            } else {
+                println!("\n{} {}", "::".magenta(), "OMBRACRYPT PRE-FLIGHT STORAGE ASSESSMENT".bold().cyan());
+                println!("{}", "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━".bright_black());
+                println!("{} {}", "▶ Mode:              ".bright_black(), mode_str.bold());
+                println!("{} {}", "▶ Target:            ".bright_black(), target.display());
+                println!("{} {}", "▶ Destination:       ".bright_black(), out_dir.display());
+                println!("{} {:.2} MB", "▶ Required Free:     ".bright_black(), assessment.required_bytes as f64 / 1_048_576.0);
+                println!("{} {:.2} MB", "▶ Available Free:    ".bright_black(), assessment.available_bytes as f64 / 1_048_576.0);
+                println!("{} {}", "▶ Sufficient Space:  ".bright_black(), if assessment.sufficient { "YES".green().bold() } else { "NO".red().bold() });
+                if let Some(ref conflict) = assessment.conflict_error {
+                    println!("{} {}", "▶ Conflict Detected: ".red().bold(), conflict.red());
+                } else {
+                    println!("{} {}", "▶ Path Conflicts:    ".bright_black(), "None (Clear)".green());
                 }
-                Err(e) => {
-                    eprintln!("{} {}\n", "✖ ERROR:".red(), e.red());
-                    process::exit(1);
-                }
+                println!("{} {}", "▶ Summary:           ".bright_black(), assessment.summary);
+                println!("{}", "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n".bright_black());
             }
+            Ok(())
+        }
+    }
+}
+
+fn main() -> std::process::ExitCode {
+    match run() {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(err) => {
+            eprintln!("[!] Error: {err}");
+            std::process::ExitCode::FAILURE
         }
     }
 }

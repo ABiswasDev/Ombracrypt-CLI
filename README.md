@@ -33,8 +33,9 @@ Operating offline with **zero telemetry, no cloud dependencies, and zero key cus
 * **Bounded In-Memory AEAD Streaming:** Streams directory trees directly through bounded in-process buffers in chunks up to 1&nbsp;MiB. Eliminates unencrypted intermediate TAR staging archives on disk during encryption.
 * **Cryptographic Artifact Separation:**
   * `.obv` **(Encrypted Vault):** Authenticated ciphertext stream bound to header metadata via Additional Authenticated Data (AAD).
-  * `.obk` **(Private Key):** 86-byte canonical offline decapsulation key generated with `0600` owner-only permissions.
-  * `.obp` **(Public Sealing Key):** Reusable public key allowing one-way vault encryption for individual or group recipients without granting decryption rights.
+  * `.obk` **(Private Key):** Offline decapsulation key generated with `0600` owner-only permissions. Exactly **86 bytes** for the default `xwing` profile (32-byte seed + X25519 + metadata/phantom blocks) and **3,254 bytes** for the `cypherpunk` profile (3,168-byte ML-KEM-1024 decapsulation key + X25519 + metadata/phantom blocks).
+  * `.obp` **(Public Sealing Key):** Reusable public key allowing one-way vault encryption for individual or group recipients without granting decryption rights (1,222 bytes for `xwing`, 1,606 bytes for `cypherpunk`).
+* **Cooperative Signal Cancellation & Rollback:** Intercepts `SIGINT` (Ctrl+C), `SIGTERM`, and `SIGHUP` via `ctrlc` and an atomic cancellation barrier. Active staging directories (`.ombracrypt_stage_*`) and incomplete files are automatically rolled back and purged before exit. (Uncatchable terminations like `SIGKILL` or sudden power loss rely on `ombracrypt clean`).
 * **Interactive Duress Response:** Entering a secondary deception passcode during decryption triggers an in-place CSPRNG overwrite against the target `.obk` key file on disk (enforcing `st_nlink > 1` protection) and returns a generic authentication failure, rendering the private key unrecoverable under duress.
 * **Defensive Filesystem Architecture:** Pre-flight storage telemetry via `fs2`, collision-proof atomic publication (`atomic_publish_noreplace` and `atomic_publish_dir_noreplace`), advisory sentinel file locks (`.active.lock`), and defensive TAR parsing limits (zip-slip sanitization, anti-symlink traversal, directory depth ceilings).
 * **Scriptable & CI-Ready:** Supports both interactive masked terminal prompts (`inquire`) and non-interactive inputs (`--password-env`, `--password-file`, or standard input pipe).
@@ -197,14 +198,14 @@ ombracrypt inspect --mode encrypt --target "/data/vault" --output-dir "/backups"
 
 ### 5. `clean` (Staging Cleanup)
 
-Scans target directories for interrupted or orphaned `.ombracrypt_stage_*` temporary staging remnants and reclaims disk space.
+Scans target directories for interrupted or orphaned `.ombracrypt_stage_*` temporary staging remnants and reclaims disk space. Supports passing multiple directories with automatic path deduplication and canonicalization.
 
 ```bash
 # Clean current directory
 ombracrypt clean
 
-# Clean specific folder
-ombracrypt clean --target-dir "/backups"
+# Clean multiple directories at once
+ombracrypt clean -d "/backups" -d "/mnt/coldstorage" -d "/var/data"
 ```
 
 ---
@@ -245,8 +246,8 @@ echo -n "MyMasterPassword" | ombracrypt encrypt \
 | Extension | Artifact Role | Internal Structure & Format |
 | :--- | :--- | :--- |
 | **`.obv`** | Encrypted Vault | Magic bytes `OMBV\x02`, cipher ID, KEM ID, Argon2id parameters (64&nbsp;MiB, 3 passes, 4 lanes), salt, nonce, KEM ciphertext payload, and 1&nbsp;MiB chunked AEAD ciphertext blocks with authenticated end-of-stream tags. |
-| **`.obk`** | Private Decapsulation Key | Magic bytes `OBSK\x02`, profile ID, 32-byte X25519 static private key, ML-KEM private seed/key material, and 32-byte phantom duress verification block. |
-| **`.obp`** | Public Sealing Key | Magic bytes `OBPK\x02`, profile ID, 32-byte X25519 public key, and ML-KEM public encapsulation key. |
+| **`.obk`** | Private Decapsulation Key | Magic bytes `OBSK\x02`, profile ID, duress salt (16 B), private KEM material, static X25519 private key, and 32-byte phantom duress block. Exactly **86 bytes** for X-Wing (`xwing`) and **3,254 bytes** for Cypherpunk (`cypherpunk`). Restricted to `0600` permissions. |
+| **`.obp`** | Public Sealing Key | Magic bytes `OBPK\x02`, profile ID, ML-KEM public encapsulation key, and static X25519 public key. Exactly **1,222 bytes** for X-Wing and **1,606 bytes** for Cypherpunk. |
 
 ---
 

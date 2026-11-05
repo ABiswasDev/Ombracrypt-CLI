@@ -42,16 +42,20 @@ Implemented 5 core subcommands:
 2. `decrypt`: Authenticates and extracts `.obv` vaults using `.obk` Private Keys.
 3. `keygen`: Generates standalone reusable `.obp` Public + `.obk` Private keypairs.
 4. `inspect`: Evaluates disk space requirements and path conflicts (supports human-readable and `--json` outputs).
-5. `clean`: Scans and reclaims interrupted or aborted `.ombracrypt_stage_*` temporary staging directories.
-* **Hybrid Credential Ingestion:** Interactive masked terminal prompts via `inquire` on TTYs; non-interactive inputs via `--password-env`, `--password-file`, or standard input pipe for CI/scripts.
+5. `clean`: Multi-target scanner (`-d / --target-dir` with `ArgAction::Append`) supporting path deduplication and file-to-parent normalization to purge `.ombracrypt_stage_*` remnants.
+* **Cooperative Signal Cancellation:** Intercepts `SIGINT` (Ctrl+C), `SIGTERM`, and `SIGHUP` via `ctrlc` (`termination` feature) using a non-blocking `AtomicBool` barrier and pre-commit check, triggering safe rollback of temporary staging directories before process termination.
+* **Strict Credential Zeroization & Safe Process Unwinding:** Ingests all passwords directly into `zeroize::Zeroizing<String>` without unzeroized intermediates. Removed all `process::exit` calls across the codebase; `main()` returns `std::process::ExitCode` to guarantee stack unwinding and destructor zeroization.
 * **Terminal UI:** Ombracrypt branding banners and animated `indicatif` progress bars (with `-q / --quiet` option for script suppression).
 
 ### E. Conformance Testing & Workflows
-* **54 Security & Regression Tests (`src/tests.rs`):** Ported test suite including Known Answer Tests (KAT) from `tests/fixtures/xwing_revision11/`, AAD tampering detection, truncated ciphertext rejection, and collision guards.
-* **Test Performance:** Running `cargo test --release -- --nocapture` passes **53/53 tests in 1.77 seconds** (the 54th test is Windows-specific).
+* **56 Security & Regression Tests (`src/tests.rs`):** Comprehensive test suite including Known Answer Tests (KAT) from `tests/fixtures/xwing_revision11/`, AAD tampering detection, truncated ciphertext rejection, collision guards, multi-target cleaner deduplication, pre-commit cancellation rollback, and bidirectional verification of all 4 cryptographic profile permutations.
+* **Key Format Invariants:**
+  * **X-Wing (Default):** `.obk` Private Key is **86 bytes**; `.obp` Public Key is **1,222 bytes**.
+  * **Cypherpunk:** `.obk` Private Key is **3,254 bytes** (3,168-byte ML-KEM-1024 decapsulation key $d_k$ + 32-byte X25519 private key + metadata/phantom blocks); `.obp` Public Key is **1,606 bytes**.
+* **Test Performance:** Running `cargo test --release -- --nocapture` passes **56/56 tests in 2.76 seconds** (57th test is Windows-specific).
 * **CI Suite (`.github/workflows/ci.yml`):** Cross-platform matrix (`ubuntu-22.04`, `windows-latest`, `macos-latest`) testing compilation and security suite.
 * **Release Pipeline (`.github/workflows/release.yml`):** Multi-platform automated builds on `v*` tags for Linux x64, macOS Intel (x64), macOS Apple Silicon (ARM64), and Windows x64, with aggregated SHA-256 checksums and pre-release gating.
-* **Documentation & Licensing:** Overhauled `README.md` and adopted the **Cryptographic Autonomy License 1.0 (CAL-1.0)** in `LICENSE`.
+* **Documentation & Licensing:** Overhauled `README.md` and `docs/QUICKSTART.md`, and adopted the **Cryptographic Autonomy License 1.0 (CAL-1.0)** in `LICENSE`.
 
 ---
 
@@ -74,7 +78,7 @@ Implemented 5 core subcommands:
 When resuming work on this repository, complete the following items in priority order:
 
 1. **Update `docs/` Markdown Suite:**
-   * Review and synchronize [`docs/ARCHITECTURE.md`](file:///home/abby/development/ombracrypt-cli/docs/ARCHITECTURE.md), [`docs/CRYPTOGRAPHY.md`](file:///home/abby/development/ombracrypt-cli/docs/CRYPTOGRAPHY.md), and [`docs/QUICKSTART.md`](file:///home/abby/development/ombracrypt-cli/docs/QUICKSTART.md) with the new v2.0.0 specifications (currently they reference legacy v0.4.x Kyber-768/Argon2 parameters).
+   * [`docs/QUICKSTART.md`](file:///home/abby/development/ombracrypt-cli/docs/QUICKSTART.md) is now fully synchronized with v2.0.0. Complete review of [`docs/ARCHITECTURE.md`](file:///home/abby/development/ombracrypt-cli/docs/ARCHITECTURE.md) and [`docs/CRYPTOGRAPHY.md`](file:///home/abby/development/ombracrypt-cli/docs/CRYPTOGRAPHY.md) to replace remaining references to legacy v0.4.x Kyber parameters.
 2. **Generate Shell Autocompletions:**
    * Integrate `clap_complete` to automatically generate shell completion scripts (Bash, Zsh, Fish, PowerShell) during build or via an `ombracrypt completions <SHELL>` command.
 3. **Man Page Generation:**

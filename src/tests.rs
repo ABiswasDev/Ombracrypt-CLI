@@ -1902,3 +1902,200 @@ fn test_fs_guard_windows_sentinel_identity_and_replacement() {
     drop(sentinel_file);
     drop(other_file);
 }
+
+// =========================================================================
+// OPERATIONAL SECURITY & CLI SIGNAL REGRESSION TESTS
+// =========================================================================
+
+#[test]
+fn test_cleaner_path_normalization_and_deduplication() {
+    let (ws, _guard) = create_test_workspace("clean_dedup");
+    let sub1 = ws.join("dir1");
+    let sub2 = ws.join("dir2");
+    fs::create_dir_all(&sub1).unwrap();
+    fs::create_dir_all(&sub2).unwrap();
+
+    // Create an orphaned staging folder inside sub1 matching the exact 50-byte format (.ombracrypt_stage_<32hex>)
+    let stale_stage = sub1.join(".ombracrypt_stage_11112222333344445555666677778888");
+    fs::create_dir_all(&stale_stage).unwrap();
+    fs::write(stale_stage.join("remnant.bin"), b"stale data").unwrap();
+    let lock_file = fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .open(stale_stage.join(".active.lock"))
+        .unwrap();
+    drop(lock_file);
+
+    // Also create a dummy file inside sub1
+    let dummy_file = sub1.join("report.txt");
+    fs::write(&dummy_file, b"content").unwrap();
+
+    // Emulate the path resolution & deduplication logic from CLI clean:
+    let input_dirs = vec![
+        sub1.clone(),
+        dummy_file.clone(), // file in sub1 -> resolves to sub1
+        sub1.clone(),       // duplicate
+        sub2.clone(),
+    ];
+
+    let mut resolved_dirs: Vec<PathBuf> = Vec::new();
+    for path in input_dirs {
+        let dir = if path.is_file() {
+            path.parent()
+                .map(|p| if p.as_os_str().is_empty() { Path::new(".") } else { p })
+                .unwrap_or(Path::new("."))
+                .to_path_buf()
+        } else {
+            path
+        };
+        let canon = dir.canonicalize().unwrap_or(dir);
+        if !resolved_dirs.contains(&canon) {
+            resolved_dirs.push(canon);
+        }
+    }
+
+    // Exactly 2 unique directories should remain: sub1 and sub2
+    assert_eq!(resolved_dirs.len(), 2, "Duplicate and file parent paths must be deduplicated to exactly 2 targets");
+
+    let mut total_count = 0usize;
+    let mut total_freed = 0u64;
+    for d in &resolved_dirs {
+        let (cnt, b) = clean_scoped_staging_dir(d).unwrap();
+        total_count += cnt;
+        total_freed += b;
+    }
+
+    assert_eq!(total_count, 1, "Exactly one orphaned staging folder should be cleaned");
+    assert!(total_freed > 0, "Freed bytes must be greater than zero");
+    assert!(!stale_stage.exists(), "Staging folder must be purged");
+    assert!(dummy_file.exists(), "Regular files must not be touched");
+}
+
+#[test]
+fn test_pre_commit_cancellation_barrier_triggers_full_rollback() {
+    let (ws, _guard) = create_test_workspace("pre_commit_cancel");
+    let src_dir = ws.join("payload");
+    let vault_dir = ws.join("vault_out");
+    let key_dir = ws.join("keys_out");
+    fs::create_dir_all(&src_dir).unwrap();
+    fs::create_dir_all(&vault_dir).unwrap();
+    fs::create_dir_all(&key_dir).unwrap();
+
+    fs::write(src_dir.join("test.txt"), b"Pre-commit cancellation test data").unwrap();
+
+    // Cancellation token already set to true BEFORE commit
+    let cancel_token = Arc::new(AtomicBool::new(true));
+
+    let res = encrypt_vault_core(
+        None,
+        src_dir.to_str().unwrap(),
+        vault_dir.to_str().unwrap(),
+        key_dir.to_str().unwrap(),
+        false,
+        "xchacha20",
+        "xwing",
+        "MasterPassword123!",
+        "",
+        Some(cancel_token),
+    );
+
+    assert!(res.is_err(), "Encryption must abort upon pre-commit cancellation");
+    let err = res.unwrap_err();
+    assert!(
+        err.contains("Operation aborted by user"),
+        "Error message must indicate user abortion: {err}"
+    );
+
+    // Verify neither .obv nor .obk exists in the output directories
+    let obv_path = vault_dir.join("payload.obv");
+    let obk_path = key_dir.join("payload.obk");
+    let obp_path = key_dir.join("payload.obp");
+
+    assert!(!obv_path.exists(), "Vault file must not be committed upon cancellation");
+    assert!(!obk_path.exists(), "Private key file must not be committed upon cancellation");
+    assert!(!obp_path.exists(), "Public key file must not be committed upon cancellation");
+
+    // Verify no staging files were leaked in vault_dir or key_dir
+    let vault_dir_entries = fs::read_dir(&vault_dir).unwrap().count();
+    let key_dir_entries = fs::read_dir(&key_dir).unwrap().count();
+    assert_eq!(vault_dir_entries, 0, "No staging files must remain in vault directory");
+    assert_eq!(key_dir_entries, 0, "No staging files must remain in key directory");
+}
+
+#[test]
+fn test_all_four_cryptographic_permutations_and_exact_key_sizes() {
+    let (ws, _guard) = create_test_workspace("four_permutations");
+
+    let permutations = [
+        ("xwing", "xchacha20", 86usize, 1222usize),
+        ("xwing", "aes256gcm", 86usize, 1222usize),
+        ("cypherpunk", "xchacha20", 3254usize, 1606usize),
+        ("cypherpunk", "aes256gcm", 3254usize, 1606usize),
+    ];
+
+    for (kem, cipher, expected_obk_len, expected_obp_len) in permutations {
+        let (obp_bytes, obk_bytes, _) = crate::crypto::generate_keypair_blobs(kem, "").unwrap();
+        assert_eq!(
+            obk_bytes.len(),
+            expected_obk_len,
+            "KEM {kem} .obk private key size mismatch: expected {expected_obk_len}, got {}",
+            obk_bytes.len()
+        );
+        assert_eq!(
+            obp_bytes.len(),
+            expected_obp_len,
+            "KEM {kem} .obp public key size mismatch: expected {expected_obp_len}, got {}",
+            obp_bytes.len()
+        );
+
+        let sub_name = format!("{}_{}", kem, cipher);
+        let src_dir = ws.join(format!("src_{}", sub_name));
+        let vault_dir = ws.join(format!("vault_{}", sub_name));
+        let key_dir = ws.join(format!("key_{}", sub_name));
+        let extract_dir = ws.join(format!("extract_{}", sub_name));
+
+        fs::create_dir_all(&src_dir).unwrap();
+        fs::create_dir_all(&vault_dir).unwrap();
+        fs::create_dir_all(&key_dir).unwrap();
+        fs::create_dir_all(&extract_dir).unwrap();
+
+        let test_payload = format!("Payload for {} + {}", kem, cipher).into_bytes();
+        fs::write(src_dir.join("data.txt"), &test_payload).unwrap();
+
+        let enc_res = encrypt_vault_core(
+            None,
+            src_dir.to_str().unwrap(),
+            vault_dir.to_str().unwrap(),
+            key_dir.to_str().unwrap(),
+            false,
+            cipher,
+            kem,
+            "TestMasterPin2026!",
+            "",
+            None,
+        );
+        assert!(enc_res.is_ok(), "Encryption must succeed for {} + {}", kem, cipher);
+
+        let src_stem = src_dir.file_name().unwrap().to_str().unwrap();
+        let dec_res = decrypt_vault_core(
+            None,
+            vault_dir.join(format!("{}.obv", src_stem)).to_str().unwrap(),
+            Some(key_dir.join(format!("{}.obk", src_stem)).to_str().unwrap()),
+            extract_dir.to_str().unwrap(),
+            "TestMasterPin2026!",
+            None,
+        );
+        assert!(dec_res.is_ok(), "Decryption must succeed for {} + {}", kem, cipher);
+
+        let extracted_file = extract_dir
+            .join(src_stem)
+            .join("data.txt");
+        assert_eq!(
+            fs::read(&extracted_file).unwrap(),
+            test_payload,
+            "Extracted content must match original for {} + {}",
+            kem,
+            cipher
+        );
+    }
+}

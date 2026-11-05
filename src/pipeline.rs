@@ -302,6 +302,12 @@ pub fn encrypt_vault_core(
     vault_file.sync_all().map_err(|e| e.to_string())?;
     drop(vault_file);
 
+    if let Some(ref token) = cancellation_token {
+        if token.load(std::sync::atomic::Ordering::Relaxed) {
+            return Err("Operation aborted by user.".to_string());
+        }
+    }
+
     let mut commit_guard = CommitRollbackGuard::new();
     if let Some((obk_part, obk_final, obp_part, obp_final)) = key_targets {
         commit_guard.commit_file(&obk_part, &obk_final)?;
@@ -478,6 +484,12 @@ pub fn decrypt_vault_core(
         return Err(
             "Integrity Error: Vault stream ended without a verified final chunk tag.".to_string(),
         );
+    }
+
+    if let Some(ref token) = cancellation_token {
+        if token.load(std::sync::atomic::Ordering::Relaxed) {
+            return Err("Operation aborted by user.".to_string());
+        }
     }
 
     // Release and unlink the internal .active.lock sentinel immediately before directory rename.
