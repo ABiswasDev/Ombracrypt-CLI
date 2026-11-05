@@ -1,17 +1,17 @@
+use fs2::FileExt;
 use rand::{rngs::OsRng, RngCore};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Barrier};
 use std::thread;
 use tar::EntryType;
-use fs2::FileExt;
 
 use crate::fs_guard::{
     atomic_publish_dir_noreplace, atomic_publish_noreplace, clean_scoped_staging_dir,
-    create_public_staging_file, read_bounded_key_file, verify_locked_sentinel,
-    CommitRollbackGuard, TempDirGuard, MAX_KEY_FILE_BYTES,
+    create_public_staging_file, read_bounded_key_file, verify_locked_sentinel, CommitRollbackGuard,
+    TempDirGuard, MAX_KEY_FILE_BYTES,
 };
 use crate::pipeline::{decrypt_vault_core, encrypt_vault_core};
 use crate::stream::{sanitize_tar_path, validate_tar_entry_type, CHUNK_SIZE};
@@ -144,7 +144,14 @@ fn test_public_key_obp_sealing_workflow() {
     let out_1 = ws.join("out1");
     let out_2 = ws.join("out2");
 
-    for d in [&src_dir, &key_dir, &vault_dir_1, &vault_dir_2, &out_1, &out_2] {
+    for d in [
+        &src_dir,
+        &key_dir,
+        &vault_dir_1,
+        &vault_dir_2,
+        &out_1,
+        &out_2,
+    ] {
         fs::create_dir_all(d).unwrap();
     }
     fs::write(src_dir.join("note.txt"), b"Group Seal Verified").unwrap();
@@ -277,7 +284,11 @@ fn test_wrong_password_rejected_and_staging_cleaned() {
     );
 
     assert!(err.is_err());
-    assert_eq!(fs::read(&obk).unwrap(), obk_before, "Typo must not scramble .obk");
+    assert_eq!(
+        fs::read(&obk).unwrap(),
+        obk_before,
+        "Typo must not scramble .obk"
+    );
     assert!(
         fs::read_dir(&out_dir).unwrap().next().is_none(),
         "Staging directory must be completely removed on failure"
@@ -325,7 +336,10 @@ fn test_header_tampering_aad_rejection() {
         "Pass1234",
         None,
     );
-    assert!(res.is_err(), "Tampered header must fail AEAD AAD verification");
+    assert!(
+        res.is_err(),
+        "Tampered header must fail AEAD AAD verification"
+    );
 }
 
 #[test]
@@ -369,7 +383,10 @@ fn test_duress_trapdoor_scrambles_obk() {
     assert!(res.is_err());
 
     let scrambled_obk = fs::read(&obk).unwrap();
-    assert_ne!(scrambled_obk, original_obk, ".obk must be overwritten with random noise");
+    assert_ne!(
+        scrambled_obk, original_obk,
+        ".obk must be overwritten with random noise"
+    );
 }
 
 #[test]
@@ -421,7 +438,9 @@ fn test_sprint1_kdf_parameter_dos_bomb_rejected() {
         None,
     );
     assert!(res.is_err());
-    assert!(res.unwrap_err().contains("Untrusted or unsupported Argon2id"));
+    assert!(res
+        .unwrap_err()
+        .contains("Untrusted or unsupported Argon2id"));
 }
 
 #[test]
@@ -466,14 +485,20 @@ fn test_sprint1_mismatched_cipher_and_nonce_rejected_without_panic() {
         None,
     );
     assert!(res.is_err());
-    assert!(res.unwrap_err().contains("Invalid cipher ID or mismatched nonce"));
+    assert!(res
+        .unwrap_err()
+        .contains("Invalid cipher ID or mismatched nonce"));
 }
 
 #[test]
 fn test_sprint1_oversized_key_file_rejected_before_allocation() {
     let (ws, _guard) = create_test_workspace("oversized_key");
     let huge_key_path = ws.join("huge.obk");
-    fs::write(&huge_key_path, vec![0u8; (MAX_KEY_FILE_BYTES as usize) + 100]).unwrap();
+    fs::write(
+        &huge_key_path,
+        vec![0u8; (MAX_KEY_FILE_BYTES as usize) + 100],
+    )
+    .unwrap();
 
     let res = read_bounded_key_file(huge_key_path.to_str().unwrap(), "Private Key (.obk)");
     assert!(res.is_err());
@@ -553,7 +578,10 @@ fn test_sprint2_transactional_commit_rolls_back_on_partial_failure() {
         assert!(commit_guard.commit_file(&part_2, &final_2).is_err());
     }
 
-    assert!(!final_1.exists(), "First committed artifact must be rolled back");
+    assert!(
+        !final_1.exists(),
+        "First committed artifact must be rolled back"
+    );
     assert_eq!(fs::read(&final_2).unwrap(), b"EXISTING_VAULT_DO_NOT_TOUCH");
 }
 
@@ -562,7 +590,10 @@ fn test_sprint3_xwing_shake256_deterministic_keygen_and_vectors() {
     let seed = [0x42u8; 32];
     let exp1 = crate::crypto::expand_xwing_seed(&seed);
     let exp2 = crate::crypto::expand_xwing_seed(&seed);
-    assert_eq!(*exp1, *exp2, "SHAKE256 seed expansion must be deterministic");
+    assert_eq!(
+        *exp1, *exp2,
+        "SHAKE256 seed expansion must be deterministic"
+    );
 
     let (obp1, obk1, kid1) =
         crate::crypto::generate_xwing_keypair_from_seed(&seed, "duress").unwrap();
@@ -762,7 +793,9 @@ fn test_sprint5_decrypt_reader_empty_slice_read_does_not_advance_stream() {
     };
 
     let mut empty_buf: [u8; 0] = [];
-    let n = reader.read(&mut empty_buf).expect("Empty read must succeed");
+    let n = reader
+        .read(&mut empty_buf)
+        .expect("Empty read must succeed");
     assert_eq!(n, 0);
     assert_eq!(
         reader.chunk_index, 0,
@@ -818,7 +851,10 @@ fn test_sprint5_duress_scramble_rejects_symlinks_and_oversized_targets() {
     fs::write(&huge_file, vec![0x41u8; (MAX_KEY_FILE_BYTES as usize) + 50]).unwrap();
 
     let res_huge = crate::deception::scramble_key_file_verified(huge_file.to_str().unwrap());
-    assert!(res_huge.is_err(), "Duress scramble must reject oversized files");
+    assert!(
+        res_huge.is_err(),
+        "Duress scramble must reject oversized files"
+    );
 
     #[cfg(unix)]
     {
@@ -895,8 +931,14 @@ fn test_sprint6_xwing_deterministic_encaps_decaps_and_implicit_rejection() {
     let (ct1, ss1) = crate::crypto::encapsulate_xwing_deterministic(&obp, &ephem_seed).unwrap();
     let (ct2, ss2) = crate::crypto::encapsulate_xwing_deterministic(&obp, &ephem_seed).unwrap();
 
-    assert_eq!(ct1, ct2, "Deterministic X-Wing encapsulation must produce identical ciphertext");
-    assert_eq!(*ss1, *ss2, "Deterministic X-Wing encapsulation must produce identical shared secret");
+    assert_eq!(
+        ct1, ct2,
+        "Deterministic X-Wing encapsulation must produce identical ciphertext"
+    );
+    assert_eq!(
+        *ss1, *ss2,
+        "Deterministic X-Wing encapsulation must produce identical shared secret"
+    );
 
     let (duress, decaps_ss) =
         crate::crypto::decapsulate_with_obk(1, &obk, &ct1, "MasterPass").unwrap();
@@ -1048,13 +1090,35 @@ fn test_sprint8_mid_stream_cancellation_cleans_staging_artifacts() {
     fs::create_dir_all(&src).unwrap();
     fs::create_dir_all(&out).unwrap();
 
-    let large_payload = vec![0x33u8; CHUNK_SIZE * 3];
+    // 4 MiB payload spans multiple 1 MiB chunks
+    let large_payload = vec![0x33u8; CHUNK_SIZE * 4];
     fs::write(src.join("payload.dat"), &large_payload).unwrap();
 
-    let cancel_flag = Arc::new(AtomicBool::new(true));
+    let cancel_flag = Arc::new(AtomicBool::new(false));
+    let (tx, rx) = std::sync::mpsc::channel();
+
+    let flag_clone = cancel_flag.clone();
+    let bg_thread = thread::spawn(move || {
+        // Wait for notification from the first chunk callback
+        if rx.recv().is_ok() {
+            flag_clone.store(true, Ordering::Relaxed);
+        }
+    });
+
+    let tx_mutex = std::sync::Mutex::new(Some(tx));
+    let progress_cb = move |percent: u8| {
+        // First chunk callback will be >= 30%
+        if percent >= 30 {
+            if let Ok(mut lock) = tx_mutex.lock() {
+                if let Some(sender) = lock.take() {
+                    let _ = sender.send(());
+                }
+            }
+        }
+    };
 
     let res = encrypt_vault_core(
-        None,
+        Some(&progress_cb),
         src.to_str().unwrap(),
         out.to_str().unwrap(),
         out.to_str().unwrap(),
@@ -1066,13 +1130,27 @@ fn test_sprint8_mid_stream_cancellation_cleans_staging_artifacts() {
         Some(cancel_flag),
     );
 
-    assert!(res.is_err());
-    assert!(res.unwrap_err().contains("Operation aborted by user"));
+    bg_thread.join().unwrap();
 
-    let leftover_count = fs::read_dir(&out).unwrap().count();
-    assert_eq!(
-        leftover_count, 0,
-        "All staging files must be cleaned upon mid-stream cancellation"
+    assert!(res.is_err());
+    let err = res.unwrap_err();
+    assert_eq!(err, "Operation aborted by user.");
+
+    // Strict filesystem rollback according to true staging artifact naming:
+    let obv_path = out.join("src.obv");
+    let obk_path = out.join("src.obk");
+    let obp_path = out.join("src.obp");
+    assert!(!obv_path.exists(), "Final vault file must not exist");
+    assert!(!obk_path.exists(), "Final key file must not exist");
+    assert!(!obp_path.exists(), "Final public key file must not exist");
+
+    let has_part_files = fs::read_dir(&out).unwrap().filter_map(|e| e.ok()).any(|e| {
+        let name = e.file_name().to_string_lossy().to_string();
+        name.starts_with(".ombracrypt_part_") && name.ends_with(".part")
+    });
+    assert!(
+        !has_part_files,
+        "No .ombracrypt_part_*.part files must remain in output directory"
     );
 }
 
@@ -1092,7 +1170,10 @@ fn test_sprint8_scoped_cleaner_purges_only_matching_artifacts() {
     fs::write(stale_stage.join(".active.lock"), b"").unwrap();
 
     let (cleaned, freed) = clean_scoped_staging_dir(&ws).unwrap();
-    assert_eq!(cleaned, 2, "Only Ombracrypt staging artifacts must be purged");
+    assert_eq!(
+        cleaned, 2,
+        "Only Ombracrypt staging artifacts must be purged"
+    );
     assert_eq!(freed, 3072);
 
     assert!(legit_file.exists(), "Legitimate files must not be touched");
@@ -1100,8 +1181,14 @@ fn test_sprint8_scoped_cleaner_purges_only_matching_artifacts() {
         unrelated_part.exists(),
         "Unrelated hidden .part files must be strictly preserved"
     );
-    assert!(!stale_part.exists(), "Stale Ombracrypt staging part file must be purged");
-    assert!(!stale_stage.exists(), "Stale Ombracrypt staging dir must be purged");
+    assert!(
+        !stale_part.exists(),
+        "Stale Ombracrypt staging part file must be purged"
+    );
+    assert!(
+        !stale_stage.exists(),
+        "Stale Ombracrypt staging dir must be purged"
+    );
 }
 
 #[test]
@@ -1113,20 +1200,28 @@ fn test_sprint8_tar_bomb_excessive_directory_depth_rejected() {
     let mut tar_bytes = Vec::new();
     {
         let mut builder = Builder::new(&mut tar_bytes);
-        let deep_path: String = (0..70).map(|i| format!("d{}/", i)).collect::<Vec<_>>().join("") + "file.txt";
+        let deep_path: String = (0..70)
+            .map(|i| format!("d{}/", i))
+            .collect::<Vec<_>>()
+            .join("")
+            + "file.txt";
         let mut h = Header::new_gnu();
         h.set_size(4);
         h.set_entry_type(EntryType::Regular);
         h.set_mode(0o644);
         h.set_cksum();
-        builder.append_data(&mut h, deep_path, &b"test"[..]).unwrap();
+        builder
+            .append_data(&mut h, deep_path, &b"test"[..])
+            .unwrap();
         builder.finish().unwrap();
     }
 
     let mut archive = tar::Archive::new(Cursor::new(tar_bytes));
     let res = crate::stream::extract_tar_archive_safely(&mut archive, &ws, 1024 * 1024);
     assert!(res.is_err(), "Excessive path depth (>64) must be rejected");
-    assert!(res.unwrap_err().contains("path depth exceeds maximum safety limit"));
+    assert!(res
+        .unwrap_err()
+        .contains("path depth exceeds maximum safety limit"));
 }
 
 // =========================================================================
@@ -1165,7 +1260,10 @@ fn test_sprint9_canonical_xwing_obk_86_bytes_and_seed_decapsulation() {
 
     let (duress_triggered, _) =
         crate::crypto::decapsulate_with_obk(1, &obk_bytes, &ct, "DuressTest123").unwrap();
-    assert!(duress_triggered, "Duress trapdoor must trigger on matching duress passcode");
+    assert!(
+        duress_triggered,
+        "Duress trapdoor must trigger on matching duress passcode"
+    );
 }
 
 #[test]
@@ -1176,10 +1274,9 @@ fn test_sprint9_xwing_combiner_specification_kat() {
     let pk_x = [0xC3u8; 32];
 
     let expected_ss: [u8; 32] = [
-        0xD1u8, 0xD4u8, 0x29u8, 0x83u8, 0x7Bu8, 0x23u8, 0x79u8, 0xF1u8,
-        0x95u8, 0xE5u8, 0x42u8, 0x4Eu8, 0x5Au8, 0x59u8, 0x1Fu8, 0xDEu8,
-        0x76u8, 0x3Bu8, 0x60u8, 0x43u8, 0xCAu8, 0xE7u8, 0xBFu8, 0x4Du8,
-        0x6Cu8, 0x6Cu8, 0x9Bu8, 0x0Du8, 0x59u8, 0xFEu8, 0x50u8, 0x43u8,
+        0xD1u8, 0xD4u8, 0x29u8, 0x83u8, 0x7Bu8, 0x23u8, 0x79u8, 0xF1u8, 0x95u8, 0xE5u8, 0x42u8,
+        0x4Eu8, 0x5Au8, 0x59u8, 0x1Fu8, 0xDEu8, 0x76u8, 0x3Bu8, 0x60u8, 0x43u8, 0xCAu8, 0xE7u8,
+        0xBFu8, 0x4Du8, 0x6Cu8, 0x6Cu8, 0x9Bu8, 0x0Du8, 0x59u8, 0xFEu8, 0x50u8, 0x43u8,
     ];
 
     let actual_ss = crate::crypto::compute_hybrid_combiner(
@@ -1208,7 +1305,7 @@ fn test_sprint9_decryption_cancellation_sanitized_message() {
     for d in [&src_dir, &vault_dir, &key_dir, &extract_dir] {
         fs::create_dir_all(d).unwrap();
     }
-    fs::write(src_dir.join("data.bin"), vec![0x42u8; CHUNK_SIZE * 2]).unwrap();
+    fs::write(src_dir.join("data.bin"), vec![0x42u8; CHUNK_SIZE * 4]).unwrap();
 
     encrypt_vault_core(
         None,
@@ -1227,9 +1324,30 @@ fn test_sprint9_decryption_cancellation_sanitized_message() {
     let obv_path = vault_dir.join("src.obv");
     let obk_path = key_dir.join("src.obk");
 
-    let cancel_flag = Arc::new(AtomicBool::new(true));
+    let cancel_flag = Arc::new(AtomicBool::new(false));
+    let (tx, rx) = std::sync::mpsc::channel();
+
+    let flag_clone = cancel_flag.clone();
+    let bg_thread = thread::spawn(move || {
+        if rx.recv().is_ok() {
+            flag_clone.store(true, Ordering::Relaxed);
+        }
+    });
+
+    let tx_mutex = std::sync::Mutex::new(Some(tx));
+    let progress_cb = move |percent: u8| {
+        // In decryption, initial setup is 10%, 25%, 40%; first chunk decrypted is > 40%
+        if percent > 40 {
+            if let Ok(mut lock) = tx_mutex.lock() {
+                if let Some(sender) = lock.take() {
+                    let _ = sender.send(());
+                }
+            }
+        }
+    };
+
     let res = decrypt_vault_core(
-        None,
+        Some(&progress_cb),
         obv_path.to_str().unwrap(),
         Some(obk_path.to_str().unwrap()),
         extract_dir.to_str().unwrap(),
@@ -1237,11 +1355,26 @@ fn test_sprint9_decryption_cancellation_sanitized_message() {
         Some(cancel_flag),
     );
 
+    bg_thread.join().unwrap();
+
     assert!(res.is_err());
     let err_msg = res.unwrap_err();
     assert_eq!(
         err_msg, "Operation aborted by user.",
         "Decryption cancel must return concise sanitized error"
+    );
+
+    // Strict filesystem rollback: verify no .ombracrypt_stage_* directories remain
+    let has_staging_dirs = fs::read_dir(&extract_dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .any(|e| {
+            let name = e.file_name().to_string_lossy().to_string();
+            name.starts_with(".ombracrypt_stage_")
+        });
+    assert!(
+        !has_staging_dirs,
+        "No .ombracrypt_stage_* directories must remain in extraction target"
     );
 
     assert_eq!(
@@ -1272,7 +1405,11 @@ fn test_sprint10_xwing_independent_reference_kat() {
 
     assert_eq!(kem_id, 1, "Profile ID must be 1 (X-Wing)");
     assert_eq!(obk.len(), 86, "Canonical X-Wing .obk must be 86 bytes");
-    assert_eq!(obp.len(), 1222, "Ombracrypt .obp must be 6-byte header + 1,216-byte raw X-Wing public key");
+    assert_eq!(
+        obp.len(),
+        1222,
+        "Ombracrypt .obp must be 6-byte header + 1,216-byte raw X-Wing public key"
+    );
 
     let raw_pk = &obp[6..];
     assert_eq!(raw_pk.len(), 1216);
@@ -1281,48 +1418,43 @@ fn test_sprint10_xwing_independent_reference_kat() {
         "Raw X-Wing public key differs from independent reference fixture"
     );
 
-    let (ct, ss_enc) =
-        crate::crypto::encapsulate_xwing_deterministic(&obp, &ephem_seed).unwrap();
+    let (ct, ss_enc) = crate::crypto::encapsulate_xwing_deterministic(&obp, &ephem_seed).unwrap();
     assert_eq!(ct.len(), 1120);
     assert_eq!(
-        ct.as_slice(), EXPECTED_CIPHERTEXT,
+        ct.as_slice(),
+        EXPECTED_CIPHERTEXT,
         "X-Wing ciphertext differs from independent reference fixture"
     );
     assert_eq!(ss_enc.len(), 32);
     assert_eq!(
-        &ss_enc[..], EXPECTED_SHARED_SECRET,
+        &ss_enc[..],
+        EXPECTED_SHARED_SECRET,
         "X-Wing shared secret differs from independent reference fixture"
     );
 
-    let (duress, ss_dec_opt) = crate::crypto::decapsulate_with_obk(
-        1,
-        &obk,
-        &ct,
-        "MasterPassword",
-    )
-    .unwrap();
-    assert!(!duress, "Duress flag must be false for normal master password");
+    let (duress, ss_dec_opt) =
+        crate::crypto::decapsulate_with_obk(1, &obk, &ct, "MasterPassword").unwrap();
+    assert!(
+        !duress,
+        "Duress flag must be false for normal master password"
+    );
     let ss_dec = ss_dec_opt.expect("Decapsulation must return shared secret");
-    assert_eq!(*ss_dec, *ss_enc, "Decapsulated shared secret must match encapsulated shared secret");
+    assert_eq!(
+        *ss_dec, *ss_enc,
+        "Decapsulated shared secret must match encapsulated shared secret"
+    );
 
-    let (duress_triggered, _) = crate::crypto::decapsulate_with_obk(
-        1,
-        &obk,
-        &ct,
-        "DuressTrapdoor999",
-    )
-    .unwrap();
-    assert!(duress_triggered, "Duress trapdoor must trigger when duress passcode is supplied");
+    let (duress_triggered, _) =
+        crate::crypto::decapsulate_with_obk(1, &obk, &ct, "DuressTrapdoor999").unwrap();
+    assert!(
+        duress_triggered,
+        "Duress trapdoor must trigger when duress passcode is supplied"
+    );
 
     let mut corrupted_ct = ct.clone();
     corrupted_ct[0] ^= 0x01;
-    let (_, ss_rejected) = crate::crypto::decapsulate_with_obk(
-        1,
-        &obk,
-        &corrupted_ct,
-        "MasterPassword",
-    )
-    .unwrap();
+    let (_, ss_rejected) =
+        crate::crypto::decapsulate_with_obk(1, &obk, &corrupted_ct, "MasterPassword").unwrap();
     assert_ne!(
         *ss_rejected.unwrap(),
         *ss_enc,
@@ -1350,7 +1482,10 @@ fn test_fs_guard_atomic_no_replace_publishes_successfully() {
     let res = crate::fs_guard::atomic_publish_noreplace(&staging_path, &final_path);
     assert!(res.is_ok(), "Publication must succeed on clean target");
 
-    assert!(final_path.exists(), "Final file must exist after publication");
+    assert!(
+        final_path.exists(),
+        "Final file must exist after publication"
+    );
     let read_back = std::fs::read(&final_path).unwrap();
     assert_eq!(read_back, b"CONFIDENTIAL_PAYLOAD_DATA");
     assert!(!staging_path.exists(), "Staged .part file must be consumed");
@@ -1411,8 +1546,7 @@ fn test_fs_guard_atomic_no_replace_fails_closed_on_unsupported_fs() {
 
     std::fs::write(&staging_path, b"STAGED_PAYLOAD").unwrap();
 
-    let res =
-        crate::fs_guard::atomic_publish_noreplace_internal(&staging_path, &final_path, true);
+    let res = crate::fs_guard::atomic_publish_noreplace_internal(&staging_path, &final_path, true);
     assert!(
         res.is_err(),
         "Must abort when filesystem lacks no-replace support"
@@ -1428,7 +1562,10 @@ fn test_fs_guard_atomic_no_replace_fails_closed_on_unsupported_fs() {
         !final_path.exists(),
         "Target file must not be created when operation is unsupported"
     );
-    assert!(staging_path.exists(), "Source part file must remain untouched");
+    assert!(
+        staging_path.exists(),
+        "Source part file must remain untouched"
+    );
 
     let _ = std::fs::remove_dir_all(&temp_dir);
 }
@@ -1445,7 +1582,10 @@ fn test_fs_guard_active_locked_staging_file_skipped_by_cleaner() {
     let (cleaned, freed) = clean_scoped_staging_dir(&ws).unwrap();
     assert_eq!(cleaned, 0, "Active locked staging file must NOT be purged");
     assert_eq!(freed, 0);
-    assert!(active_part.exists(), "Active staging file must remain intact");
+    assert!(
+        active_part.exists(),
+        "Active staging file must remain intact"
+    );
 
     drop(locked_file);
 
@@ -1465,7 +1605,10 @@ fn test_fs_guard_atomic_dir_publication_publishes_successfully() {
     fs::write(stage_dir.join("subdir/file.txt"), b"EXTRACTED_CONTENT").unwrap();
 
     let res = atomic_publish_dir_noreplace(&stage_dir, &final_dir);
-    assert!(res.is_ok(), "Directory publication must succeed on clean target");
+    assert!(
+        res.is_ok(),
+        "Directory publication must succeed on clean target"
+    );
 
     assert!(final_dir.exists(), "Final directory must exist");
     assert!(final_dir.join("subdir/file.txt").exists());
@@ -1500,7 +1643,10 @@ fn test_fs_guard_atomic_dir_publication_prevents_overwrite_of_existing_dir() {
     );
 
     assert!(stage_dir.exists(), "Staging directory must remain intact");
-    assert!(!final_dir.join("new_file.txt").exists(), "Existing directory must not be clobbered");
+    assert!(
+        !final_dir.join("new_file.txt").exists(),
+        "Existing directory must not be clobbered"
+    );
 }
 
 #[test]
@@ -1513,7 +1659,10 @@ fn test_fs_guard_atomic_dir_publication_prevents_overwrite_of_file() {
     fs::write(&final_path, b"DO_NOT_OVERWRITE").unwrap();
 
     let res = atomic_publish_dir_noreplace(&stage_dir, &final_path);
-    assert!(res.is_err(), "Must fail closed if destination is an existing file");
+    assert!(
+        res.is_err(),
+        "Must fail closed if destination is an existing file"
+    );
     assert_eq!(fs::read(&final_path).unwrap(), b"DO_NOT_OVERWRITE");
     assert!(stage_dir.exists());
 }
@@ -1595,7 +1744,11 @@ fn test_fs_guard_concurrent_two_publishers_collision_barrier() {
         }
         _ => (0, 0),
     };
-    assert_eq!((ok_count, err_count), (1, 1), "Exactly one concurrent publication must succeed");
+    assert_eq!(
+        (ok_count, err_count),
+        (1, 1),
+        "Exactly one concurrent publication must succeed"
+    );
 
     let winner_bytes = fs::read(&final_target).unwrap();
     assert!(
@@ -1603,8 +1756,12 @@ fn test_fs_guard_concurrent_two_publishers_collision_barrier() {
         "Published vault must match winner payload completely"
     );
 
-    let remaining_parts = (if part_a.exists() { 1 } else { 0 }) + (if part_b.exists() { 1 } else { 0 });
-    assert_eq!(remaining_parts, 1, "Only the loser's staging file remains intact");
+    let remaining_parts =
+        (if part_a.exists() { 1 } else { 0 }) + (if part_b.exists() { 1 } else { 0 });
+    assert_eq!(
+        remaining_parts, 1,
+        "Only the loser's staging file remains intact"
+    );
 }
 
 #[test]
@@ -1658,7 +1815,11 @@ fn test_fs_guard_concurrent_two_directory_publishers_collision_barrier() {
         }
         _ => (0, 0),
     };
-    assert_eq!((ok_count, err_count), (1, 1), "Exactly one concurrent directory publication must succeed");
+    assert_eq!(
+        (ok_count, err_count),
+        (1, 1),
+        "Exactly one concurrent directory publication must succeed"
+    );
 
     let winner_bytes = fs::read(final_target.join("data.txt")).unwrap();
     assert!(
@@ -1666,8 +1827,12 @@ fn test_fs_guard_concurrent_two_directory_publishers_collision_barrier() {
         "Published directory content must match winner payload completely"
     );
 
-    let remaining_stages = (if stage_a.exists() { 1 } else { 0 }) + (if stage_b.exists() { 1 } else { 0 });
-    assert_eq!(remaining_stages, 1, "Only the loser's staging directory remains intact");
+    let remaining_stages =
+        (if stage_a.exists() { 1 } else { 0 }) + (if stage_b.exists() { 1 } else { 0 });
+    assert_eq!(
+        remaining_stages, 1,
+        "Only the loser's staging directory remains intact"
+    );
 }
 
 #[test]
@@ -1693,7 +1858,10 @@ fn test_fs_guard_active_locked_extraction_dir_skipped_by_cleaner() {
     assert_eq!(cleaned, 0, "Active extraction directory must NOT be purged");
     assert_eq!(freed, 0);
 
-    assert!(stage_dir.exists(), "Staging directory must remain untouched");
+    assert!(
+        stage_dir.exists(),
+        "Staging directory must remain untouched"
+    );
     assert!(sentinel_path.exists());
     assert!(stage_dir.join("extracted_chunk.bin").exists());
 
@@ -1726,7 +1894,10 @@ fn test_fs_guard_stale_extraction_dir_purged_when_lock_released() {
     let (cleaned, freed) = clean_scoped_staging_dir(&ws).unwrap();
     assert_eq!(cleaned, 1, "Abandoned extraction directory must be purged");
     assert_eq!(freed, 2048);
-    assert!(!stage_dir.exists(), "Stale staging directory must be unlinked");
+    assert!(
+        !stage_dir.exists(),
+        "Stale staging directory must be unlinked"
+    );
 }
 
 #[test]
@@ -1757,7 +1928,10 @@ fn test_fs_guard_cleaner_ignores_malformed_names() {
     fs::create_dir_all(&non_hex_dir).unwrap();
 
     let (cleaned, freed) = clean_scoped_staging_dir(&ws).unwrap();
-    assert_eq!(cleaned, 0, "Malformed names must never be touched by cleaner");
+    assert_eq!(
+        cleaned, 0,
+        "Malformed names must never be touched by cleaner"
+    );
     assert_eq!(freed, 0);
 
     assert!(short_file.exists());
@@ -1849,7 +2023,10 @@ fn test_fs_guard_stale_open_sentinel_fd_race_rejected() {
 
     // 6. Verify cleaner rejects the directory because post-lock validation detects unlinked sentinel
     let (cleaned, freed) = clean_scoped_staging_dir(&ws).unwrap();
-    assert_eq!(cleaned, 0, "Directory with unlinked sentinel must not be purged");
+    assert_eq!(
+        cleaned, 0,
+        "Directory with unlinked sentinel must not be purged"
+    );
     assert_eq!(freed, 0);
     assert!(stage_dir.exists(), "Staging directory must remain intact");
 
@@ -1942,7 +2119,13 @@ fn test_cleaner_path_normalization_and_deduplication() {
     for path in input_dirs {
         let dir = if path.is_file() {
             path.parent()
-                .map(|p| if p.as_os_str().is_empty() { Path::new(".") } else { p })
+                .map(|p| {
+                    if p.as_os_str().is_empty() {
+                        Path::new(".")
+                    } else {
+                        p
+                    }
+                })
                 .unwrap_or(Path::new("."))
                 .to_path_buf()
         } else {
@@ -1955,7 +2138,11 @@ fn test_cleaner_path_normalization_and_deduplication() {
     }
 
     // Exactly 2 unique directories should remain: sub1 and sub2
-    assert_eq!(resolved_dirs.len(), 2, "Duplicate and file parent paths must be deduplicated to exactly 2 targets");
+    assert_eq!(
+        resolved_dirs.len(),
+        2,
+        "Duplicate and file parent paths must be deduplicated to exactly 2 targets"
+    );
 
     let mut total_count = 0usize;
     let mut total_freed = 0u64;
@@ -1965,7 +2152,10 @@ fn test_cleaner_path_normalization_and_deduplication() {
         total_freed += b;
     }
 
-    assert_eq!(total_count, 1, "Exactly one orphaned staging folder should be cleaned");
+    assert_eq!(
+        total_count, 1,
+        "Exactly one orphaned staging folder should be cleaned"
+    );
     assert!(total_freed > 0, "Freed bytes must be greater than zero");
     assert!(!stale_stage.exists(), "Staging folder must be purged");
     assert!(dummy_file.exists(), "Regular files must not be touched");
@@ -1981,13 +2171,26 @@ fn test_pre_commit_cancellation_barrier_triggers_full_rollback() {
     fs::create_dir_all(&vault_dir).unwrap();
     fs::create_dir_all(&key_dir).unwrap();
 
-    fs::write(src_dir.join("test.txt"), b"Pre-commit cancellation test data").unwrap();
+    // Single-chunk payload
+    fs::write(
+        src_dir.join("test.txt"),
+        b"Pre-commit cancellation test data",
+    )
+    .unwrap();
 
-    // Cancellation token already set to true BEFORE commit
-    let cancel_token = Arc::new(AtomicBool::new(true));
+    let cancel_token = Arc::new(AtomicBool::new(false));
+    let flag_clone = cancel_token.clone();
+
+    // Deterministically trip the cancellation flag ONLY after the final chunk finishes streaming (percent >= 95),
+    // immediately before the atomic publication phase
+    let progress_cb = move |percent: u8| {
+        if percent >= 95 {
+            flag_clone.store(true, Ordering::Relaxed);
+        }
+    };
 
     let res = encrypt_vault_core(
-        None,
+        Some(&progress_cb),
         src_dir.to_str().unwrap(),
         vault_dir.to_str().unwrap(),
         key_dir.to_str().unwrap(),
@@ -1999,11 +2202,14 @@ fn test_pre_commit_cancellation_barrier_triggers_full_rollback() {
         Some(cancel_token),
     );
 
-    assert!(res.is_err(), "Encryption must abort upon pre-commit cancellation");
-    let err = res.unwrap_err();
     assert!(
-        err.contains("Operation aborted by user"),
-        "Error message must indicate user abortion: {err}"
+        res.is_err(),
+        "Encryption must abort upon pre-commit cancellation"
+    );
+    let err = res.unwrap_err();
+    assert_eq!(
+        err, "Operation aborted by user.",
+        "Error message must match exact contract: {err}"
     );
 
     // Verify neither .obv nor .obk exists in the output directories
@@ -2011,19 +2217,51 @@ fn test_pre_commit_cancellation_barrier_triggers_full_rollback() {
     let obk_path = key_dir.join("payload.obk");
     let obp_path = key_dir.join("payload.obp");
 
-    assert!(!obv_path.exists(), "Vault file must not be committed upon cancellation");
-    assert!(!obk_path.exists(), "Private key file must not be committed upon cancellation");
-    assert!(!obp_path.exists(), "Public key file must not be committed upon cancellation");
+    assert!(
+        !obv_path.exists(),
+        "Vault file must not be committed upon cancellation"
+    );
+    assert!(
+        !obk_path.exists(),
+        "Private key file must not be committed upon cancellation"
+    );
+    assert!(
+        !obp_path.exists(),
+        "Public key file must not be committed upon cancellation"
+    );
 
-    // Verify no staging files were leaked in vault_dir or key_dir
-    let vault_dir_entries = fs::read_dir(&vault_dir).unwrap().count();
-    let key_dir_entries = fs::read_dir(&key_dir).unwrap().count();
-    assert_eq!(vault_dir_entries, 0, "No staging files must remain in vault directory");
-    assert_eq!(key_dir_entries, 0, "No staging files must remain in key directory");
+    // Verify strict filesystem rollback: no .ombracrypt_part_*.part files leaked
+    let has_vault_parts = fs::read_dir(&vault_dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .any(|e| {
+            let name = e.file_name().to_string_lossy().to_string();
+            name.starts_with(".ombracrypt_part_") && name.ends_with(".part")
+        });
+    let has_key_parts = fs::read_dir(&key_dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .any(|e| {
+            let name = e.file_name().to_string_lossy().to_string();
+            name.starts_with(".ombracrypt_part_") && name.ends_with(".part")
+        });
+
+    assert!(
+        !has_vault_parts,
+        "No .ombracrypt_part_*.part files must remain in vault directory"
+    );
+    assert!(
+        !has_key_parts,
+        "No .ombracrypt_part_*.part files must remain in key directory"
+    );
+    assert_eq!(fs::read_dir(&vault_dir).unwrap().count(), 0);
+    assert_eq!(fs::read_dir(&key_dir).unwrap().count(), 0);
 }
 
+// Verifies CLI-internal format compliance across all 4 cipher/KEM combinations,
+// ensuring self-consistency of key sizes and streaming roundtrips (not external desktop interop).
 #[test]
-fn test_all_four_cryptographic_permutations_and_exact_key_sizes() {
+fn test_cli_self_roundtrip_all_four_permutations() {
     let (ws, _guard) = create_test_workspace("four_permutations");
 
     let permutations = [
@@ -2074,22 +2312,33 @@ fn test_all_four_cryptographic_permutations_and_exact_key_sizes() {
             "",
             None,
         );
-        assert!(enc_res.is_ok(), "Encryption must succeed for {} + {}", kem, cipher);
+        assert!(
+            enc_res.is_ok(),
+            "Encryption must succeed for {} + {}",
+            kem,
+            cipher
+        );
 
         let src_stem = src_dir.file_name().unwrap().to_str().unwrap();
         let dec_res = decrypt_vault_core(
             None,
-            vault_dir.join(format!("{}.obv", src_stem)).to_str().unwrap(),
+            vault_dir
+                .join(format!("{}.obv", src_stem))
+                .to_str()
+                .unwrap(),
             Some(key_dir.join(format!("{}.obk", src_stem)).to_str().unwrap()),
             extract_dir.to_str().unwrap(),
             "TestMasterPin2026!",
             None,
         );
-        assert!(dec_res.is_ok(), "Decryption must succeed for {} + {}", kem, cipher);
+        assert!(
+            dec_res.is_ok(),
+            "Decryption must succeed for {} + {}",
+            kem,
+            cipher
+        );
 
-        let extracted_file = extract_dir
-            .join(src_stem)
-            .join("data.txt");
+        let extracted_file = extract_dir.join(src_stem).join("data.txt");
         assert_eq!(
             fs::read(&extracted_file).unwrap(),
             test_payload,

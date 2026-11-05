@@ -35,7 +35,10 @@ Operating offline with **zero telemetry, no cloud dependencies, and zero key cus
   * `.obv` **(Encrypted Vault):** Authenticated ciphertext stream bound to header metadata via Additional Authenticated Data (AAD).
   * `.obk` **(Private Key):** Offline decapsulation key generated with `0600` owner-only permissions. Exactly **86 bytes** for the default `xwing` profile (32-byte seed + X25519 + metadata/phantom blocks) and **3,254 bytes** for the `cypherpunk` profile (3,168-byte ML-KEM-1024 decapsulation key + X25519 + metadata/phantom blocks).
   * `.obp` **(Public Sealing Key):** Reusable public key allowing one-way vault encryption for individual or group recipients without granting decryption rights (1,222 bytes for `xwing`, 1,606 bytes for `cypherpunk`).
-* **Cooperative Signal Cancellation & Rollback:** Intercepts `SIGINT` (Ctrl+C), `SIGTERM`, and `SIGHUP` via `ctrlc` and an atomic cancellation barrier. Active staging directories (`.ombracrypt_stage_*`) and incomplete files are automatically rolled back and purged before exit. (Uncatchable terminations like `SIGKILL` or sudden power loss rely on `ombracrypt clean`).
+* **Cooperative Signal Cancellation & Atomic Rollback:** Intercepts OS termination signals non-blockingly via `ctrlc` and an atomic cancellation barrier.
+  * **Unix (Linux/macOS):** Handles `SIGINT` (Ctrl+C), `SIGTERM`, and `SIGHUP` via `ctrlc`'s `termination` feature.
+  * **Windows:** Handles Console Control Events (`CTRL_C_EVENT`, `CTRL_CLOSE_EVENT`).
+  * Active staging directories (`.ombracrypt_stage_*`) and incomplete `.part` files undergo atomic staging rollback and artifact removal before process exit. Uncatchable interruptions (`SIGKILL`, sudden power failure) require running `ombracrypt clean`.
 * **Interactive Duress Response:** Entering a secondary deception passcode during decryption triggers an in-place CSPRNG overwrite against the target `.obk` key file on disk (enforcing `st_nlink > 1` protection) and returns a generic authentication failure, rendering the private key unrecoverable under duress.
 * **Defensive Filesystem Architecture:** Pre-flight storage telemetry via `fs2`, collision-proof atomic publication (`atomic_publish_noreplace` and `atomic_publish_dir_noreplace`), advisory sentinel file locks (`.active.lock`), and defensive TAR parsing limits (zip-slip sanitization, anti-symlink traversal, directory depth ceilings).
 * **Scriptable & CI-Ready:** Supports both interactive masked terminal prompts (`inquire`) and non-interactive inputs (`--password-env`, `--password-file`, or standard input pipe).
@@ -263,7 +266,7 @@ cd ombracrypt-cli
 # Run compilation check
 cargo check --all-targets
 
-# Run the 54-test security and regression conformance suite
+# Run the 56-test security and regression conformance suite (57 on Windows)
 cargo test --release -- --nocapture
 
 # Compile the release binary
@@ -295,7 +298,7 @@ ombracrypt-cli/
     ├── fs_guard.rs           # Atomic publication, advisory sentinel locks, path traversal defense
     ├── deception.rs          # Duress trapdoor protocol and CSPRNG .obk overwrite engine
     ├── pipeline.rs           # On-the-fly streaming encryption/decryption workflows
-    └── tests.rs              # 54 unit, regression, and KAT cryptographic tests
+    └── tests.rs              # 56 unit, regression, and KAT cryptographic tests (57 on Windows)
 ```
 
 ---

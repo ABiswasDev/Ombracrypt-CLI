@@ -60,7 +60,7 @@ If you prefer building from source, ensure you have the latest stable [Rust tool
 git clone https://github.com/ABiswasDev/ombracrypt-cli.git
 cd ombracrypt-cli
 
-# Run compilation check & full 54-test cryptographic suite
+# Run compilation check & full 56-test cryptographic suite (57 on Windows)
 cargo check --all-targets
 cargo test --release -- --nocapture
 
@@ -424,8 +424,10 @@ echo "[✓] Backup completed successfully."
 * **Note:** If the Duress Trapdoor was previously activated on this key, the header has been permanently overwritten with random noise.
 
 ### "Operation aborted by user"
-* **Cause:** A termination signal was received (e.g. `SIGINT` via Ctrl+C, `SIGTERM`, or `SIGHUP`).
-* **Cooperative Rollback:** Ombracrypt intercepts the signal non-blockingly via an atomic barrier. It halts chunk streaming, closes active file handles, and triggers `CommitRollbackGuard` and `TempFileGuard`/`TempDirGuard` to cleanly delete incomplete `.ombracrypt_stage_*` staging files before process termination.
+* **Cause:** An operating system termination signal was received.
+  * **Unix (Linux/macOS):** Handles `SIGINT` (Ctrl+C), `SIGTERM`, and `SIGHUP` via `ctrlc`'s `termination` feature.
+  * **Windows:** Handles Console Control Events (`CTRL_C_EVENT`, `CTRL_CLOSE_EVENT`).
+* **Cooperative Rollback:** Ombracrypt intercepts the signal non-blockingly via an atomic cancellation barrier. It halts chunk streaming, closes active file handles, and triggers `CommitRollbackGuard` and `TempFileGuard`/`TempDirGuard` to execute atomic staging rollback and artifact removal before process termination.
 * **Uncatchable Signals:** Uncatchable terminations (such as `SIGKILL` / `kill -9` or sudden power outages) cannot run user-space signal handlers; any abandoned staging folders from such events can be swept at any time by running `ombracrypt clean`.
 
 ---

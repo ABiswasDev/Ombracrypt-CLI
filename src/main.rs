@@ -207,12 +207,29 @@ fn print_banner(operation: &str, target: &str, quiet: bool) {
     if quiet {
         return;
     }
-    println!("\n{} {}", "::".magenta(), "OMBRACRYPT QUANTUM VAULT [v2.0.0]".bold().cyan());
-    println!("   {}", "Post-Quantum Hybrid Cryptographic Vault (CAL-1.0)".bright_black());
-    println!("{}", "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━".bright_black());
-    println!("{} {}", "▶ Operation:".bright_black(), operation.bold().green());
+    println!(
+        "\n{} {}",
+        "::".magenta(),
+        "OMBRACRYPT QUANTUM VAULT [v2.0.0]".bold().cyan()
+    );
+    println!(
+        "   {}",
+        "Post-Quantum Hybrid Cryptographic Vault (CAL-1.0)".bright_black()
+    );
+    println!(
+        "{}",
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━".bright_black()
+    );
+    println!(
+        "{} {}",
+        "▶ Operation:".bright_black(),
+        operation.bold().green()
+    );
     println!("{} {}", "▶ Target:   ".bright_black(), target.bold());
-    println!("{}", "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n".bright_black());
+    println!(
+        "{}",
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n".bright_black()
+    );
 }
 
 fn resolve_smart_output_dir(target: &Path, explicit: Option<PathBuf>) -> PathBuf {
@@ -281,7 +298,10 @@ fn fetch_credential(
         if is_optional {
             return Ok(Zeroizing::new(String::new()));
         }
-        return Err("Required credential was not provided and standard input is not a terminal.".to_string());
+        return Err(
+            "Required credential was not provided and standard input is not a terminal."
+                .to_string(),
+        );
     }
 
     // 5. Interactive masked prompt on terminal
@@ -297,7 +317,10 @@ fn fetch_credential(
             if is_optional {
                 return Ok(Zeroizing::new(String::new()));
             }
-            eprintln!("{}", "✖ ERROR: Master Password cannot be blank or whitespace only!\n".red());
+            eprintln!(
+                "{}",
+                "✖ ERROR: Master Password cannot be blank or whitespace only!\n".red()
+            );
             continue;
         }
 
@@ -310,7 +333,10 @@ fn fetch_credential(
             let confirm = Zeroizing::new(confirm);
 
             if *pass != *confirm {
-                eprintln!("{}", "✖ ERROR: Passwords do not match. Please try again.\n".red());
+                eprintln!(
+                    "{}",
+                    "✖ ERROR: Passwords do not match. Please try again.\n".red()
+                );
                 continue;
             }
         }
@@ -407,12 +433,18 @@ fn run() -> Result<(), String> {
             // Set up cooperative signal cancellation handler immediately prior to encryption
             let cancel_flag = Arc::new(AtomicBool::new(false));
             let flag_clone = cancel_flag.clone();
-            let _ = ctrlc::set_handler(move || {
+            ctrlc::set_handler(move || {
                 flag_clone.store(true, Ordering::Relaxed);
-            });
+            })
+            .map_err(|e| format!("Failed to register OS signal handler: {e}"))?;
 
             if !quiet {
-                println!("{}", "▶ Initializing Streaming Cryptographic Pipeline...".bold().yellow());
+                println!(
+                    "{}",
+                    "▶ Initializing Streaming Cryptographic Pipeline..."
+                        .bold()
+                        .yellow()
+                );
             }
 
             let (_pb, progress_cb) = create_progress_reporter(quiet);
@@ -435,9 +467,12 @@ fn run() -> Result<(), String> {
                     Ok(())
                 }
                 Err(e) => {
-                    if cancel_flag.load(Ordering::Relaxed) || e.contains("aborted by user") || e.contains("cancelled by user") {
+                    if cancel_flag.load(Ordering::Relaxed)
+                        || e.contains("aborted by user")
+                        || e.contains("cancelled by user")
+                    {
                         eprintln!(
-                            "\n{} Operation aborted by user. Any temporary staging artifacts were securely purged.\n",
+                            "\n{} Operation aborted by user. Atomic staging rollback and artifact removal completed.\n",
                             "[!]".yellow().bold()
                         );
                         Err("Operation aborted by user.".to_string())
@@ -475,12 +510,18 @@ fn run() -> Result<(), String> {
             // Set up cooperative signal cancellation handler immediately prior to decryption
             let cancel_flag = Arc::new(AtomicBool::new(false));
             let flag_clone = cancel_flag.clone();
-            let _ = ctrlc::set_handler(move || {
+            ctrlc::set_handler(move || {
                 flag_clone.store(true, Ordering::Relaxed);
-            });
+            })
+            .map_err(|e| format!("Failed to register OS signal handler: {e}"))?;
 
             if !quiet {
-                println!("{}", "▶ Authenticating Header & Initializing Decryption Engine...".bold().yellow());
+                println!(
+                    "{}",
+                    "▶ Authenticating Header & Initializing Decryption Engine..."
+                        .bold()
+                        .yellow()
+                );
             }
 
             let (_pb, progress_cb) = create_progress_reporter(quiet);
@@ -499,9 +540,12 @@ fn run() -> Result<(), String> {
                     Ok(())
                 }
                 Err(e) => {
-                    if cancel_flag.load(Ordering::Relaxed) || e.contains("aborted by user") || e.contains("cancelled by user") {
+                    if cancel_flag.load(Ordering::Relaxed)
+                        || e.contains("aborted by user")
+                        || e.contains("cancelled by user")
+                    {
                         eprintln!(
-                            "\n{} Operation aborted by user. Any temporary staging artifacts were securely purged.\n",
+                            "\n{} Operation aborted by user. Atomic staging rollback and artifact removal completed.\n",
                             "[!]".yellow().bold()
                         );
                         Err("Operation aborted by user.".to_string())
@@ -555,7 +599,13 @@ fn run() -> Result<(), String> {
             for path in input_dirs {
                 let dir = if path.is_file() {
                     path.parent()
-                        .map(|p| if p.as_os_str().is_empty() { Path::new(".") } else { p })
+                        .map(|p| {
+                            if p.as_os_str().is_empty() {
+                                Path::new(".")
+                            } else {
+                                p
+                            }
+                        })
                         .unwrap_or(Path::new("."))
                         .to_path_buf()
                 } else {
@@ -586,7 +636,10 @@ fn run() -> Result<(), String> {
 
             if !quiet {
                 if total_count == 0 {
-                    println!("{} Clean sweep finished (0 staging remnants found).", "✔".green());
+                    println!(
+                        "{} Clean sweep finished (0 staging remnants found).",
+                        "✔".green()
+                    );
                 } else {
                     println!(
                         "{} Successfully cleaned {} staging artifact(s) ({:.2} MB reclaimed).",
@@ -624,25 +677,77 @@ fn run() -> Result<(), String> {
             )?;
 
             if json {
-                let json_str = serde_json::to_string_pretty(&assessment)
-                    .unwrap_or_else(|_| "{}".to_string());
+                let json_str =
+                    serde_json::to_string_pretty(&assessment).unwrap_or_else(|_| "{}".to_string());
                 println!("{}", json_str);
             } else {
-                println!("\n{} {}", "::".magenta(), "OMBRACRYPT PRE-FLIGHT STORAGE ASSESSMENT".bold().cyan());
-                println!("{}", "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━".bright_black());
-                println!("{} {}", "▶ Mode:              ".bright_black(), mode_str.bold());
-                println!("{} {}", "▶ Target:            ".bright_black(), target.display());
-                println!("{} {}", "▶ Destination:       ".bright_black(), out_dir.display());
-                println!("{} {:.2} MB", "▶ Required Free:     ".bright_black(), assessment.required_bytes as f64 / 1_048_576.0);
-                println!("{} {:.2} MB", "▶ Available Free:    ".bright_black(), assessment.available_bytes as f64 / 1_048_576.0);
-                println!("{} {}", "▶ Sufficient Space:  ".bright_black(), if assessment.sufficient { "YES".green().bold() } else { "NO".red().bold() });
+                println!(
+                    "\n{} {}",
+                    "::".magenta(),
+                    "OMBRACRYPT PRE-FLIGHT STORAGE ASSESSMENT".bold().cyan()
+                );
+                println!(
+                    "{}",
+                    "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                        .bright_black()
+                );
+                println!(
+                    "{} {}",
+                    "▶ Mode:              ".bright_black(),
+                    mode_str.bold()
+                );
+                println!(
+                    "{} {}",
+                    "▶ Target:            ".bright_black(),
+                    target.display()
+                );
+                println!(
+                    "{} {}",
+                    "▶ Destination:       ".bright_black(),
+                    out_dir.display()
+                );
+                println!(
+                    "{} {:.2} MB",
+                    "▶ Required Free:     ".bright_black(),
+                    assessment.required_bytes as f64 / 1_048_576.0
+                );
+                println!(
+                    "{} {:.2} MB",
+                    "▶ Available Free:    ".bright_black(),
+                    assessment.available_bytes as f64 / 1_048_576.0
+                );
+                println!(
+                    "{} {}",
+                    "▶ Sufficient Space:  ".bright_black(),
+                    if assessment.sufficient {
+                        "YES".green().bold()
+                    } else {
+                        "NO".red().bold()
+                    }
+                );
                 if let Some(ref conflict) = assessment.conflict_error {
-                    println!("{} {}", "▶ Conflict Detected: ".red().bold(), conflict.red());
+                    println!(
+                        "{} {}",
+                        "▶ Conflict Detected: ".red().bold(),
+                        conflict.red()
+                    );
                 } else {
-                    println!("{} {}", "▶ Path Conflicts:    ".bright_black(), "None (Clear)".green());
+                    println!(
+                        "{} {}",
+                        "▶ Path Conflicts:    ".bright_black(),
+                        "None (Clear)".green()
+                    );
                 }
-                println!("{} {}", "▶ Summary:           ".bright_black(), assessment.summary);
-                println!("{}", "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n".bright_black());
+                println!(
+                    "{} {}",
+                    "▶ Summary:           ".bright_black(),
+                    assessment.summary
+                );
+                println!(
+                    "{}",
+                    "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                        .bright_black()
+                );
             }
             Ok(())
         }
