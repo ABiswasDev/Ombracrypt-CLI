@@ -1,54 +1,136 @@
-name: Build and Release
+name: 'Publish Releases'
 
 on:
   push:
     tags:
-      - 'v*' # Triggers the pipeline only when you push a version tag (e.g., v0.4.3)
+      - 'v*'
+  workflow_dispatch:
 
 permissions:
-  contents: write # Required to allow GitHub Actions to publish the release
+  contents: write
 
 jobs:
-  build:
-    name: Build for ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
+  build-and-release:
+    name: Build (${{ matrix.platform.name }})
+    runs-on: ${{ matrix.platform.os }}
     strategy:
+      fail-fast: false
       matrix:
-        include:
-          - os: ubuntu-latest
-            artifact_name: ombracrypt-cli
-            asset_name: ombracrypt-cli-linux-x64.tar.gz
-          - os: macos-latest
-            artifact_name: ombracrypt-cli
-            asset_name: ombracrypt-cli-macos-x64.tar.gz
-          - os: windows-latest
-            artifact_name: ombracrypt-cli.exe
-            asset_name: ombracrypt-cli-windows-x64.zip
+        platform:
+          - name: linux-x64
+            os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            binary: ombracrypt
+            asset_ext: tar.gz
+          - name: macos-x64
+            os: macos-13
+            target: x86_64-apple-darwin
+            binary: ombracrypt
+            asset_ext: tar.gz
+          - name: macos-arm64
+            os: macos-latest
+            target: aarch64-apple-darwin
+            binary: ombracrypt
+            asset_ext: tar.gz
+          - name: windows-x64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            binary: ombracrypt.exe
+            asset_ext: zip
 
     steps:
-      - name: Checkout repository
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Install Rust toolchain
+      - name: Setup Rust Stable Toolchain
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform.target }}
 
-      - name: Build release binary
-        run: cargo build --release
+      - name: Cache Cargo Build Artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.platform.target }}
 
-      - name: Package for Linux & macOS
+      - name: Build Release Binary
+        run: cargo build --release --target ${{ matrix.platform.target }}
+
+      - name: Package Binary (Unix)
         if: runner.os != 'Windows'
+        shell: bash
         run: |
-          cd target/release
-          tar -czvf ../../${{ matrix.asset_name }} ${{ matrix.artifact_name }}
+          ASSET_NAME="ombracrypt-${{ github.ref_name }}-${{ matrix.platform.name }}.tar.gz"
+          cd "target/${{ matrix.platform.target }}/release"
+          tar -czvf "../../../${ASSET_NAME}" "${{ matrix.platform.binary }}"
+          cd "../../.."
+          sha256sum "${ASSET_NAME}" > "${ASSET_NAME}.sha256"
 
-      - name: Package for Windows
+      - name: Package Binary (Windows)
         if: runner.os == 'Windows'
+        shell: pwsh
         run: |
-          cd target/release
-          Compress-Archive -Path ${{ matrix.artifact_name }} -DestinationPath ..\..\${{ matrix.asset_name }}
+          $AssetName = "ombracrypt-${{ github.ref_name }}-${{ matrix.platform.name }}.zip"
+          Compress-Archive -Path "target/${{ matrix.platform.target }}/release/${{ matrix.platform.binary }}" -DestinationPath $AssetName
+          $Hash = (Get-FileHash -Path $AssetName -Algorithm SHA256).Hash.ToLower()
+          "$Hash  $AssetName" | Out-File -FilePath "${AssetName}.sha256" -Encoding ascii
+
+      - name: Upload Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ombracrypt-bin-${{ matrix.platform.name }}
+          path: |
+            ombracrypt-*
+          if-no-files-found: error
+
+  publish:
+    name: Create GitHub Release
+    needs: build-and-release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Download All Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          pattern: ombracrypt-bin-*
+          merge-multiple: true
+
+      - name: Determine Release Mode & Build Aggregated Checksums
+        id: release_gate
+        shell: bash
+        run: |
+          cd release-assets
+          cat *.sha256 > checksums.txt
+          echo "Aggregated Checksums:"
+          cat checksums.txt
+
+          # Strict semantic versioning match: vX.Y.Z -> Stable
+          if [[ "${{ github.ref }}" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
+            echo "Release Mode: STABLE RELEASE (${{ github.ref_name }})"
+          else
+            echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
+            echo "Release Mode: PRE-RELEASE (${{ github.ref_name }})"
+          fi
 
       - name: Publish to GitHub Releases
         uses: softprops/action-gh-release@v2
         with:
-          files: ${{ matrix.asset_name }}
+          files: |
+            release-assets/*
+          name: ${{ format('Ombracrypt CLI {0}', github.ref_name) }}
+          body: |
+            ### Ombracrypt CLI Automated Release (${{ github.ref_name }})
+            
+            Offline Post-Quantum Hybrid Cryptographic Vault for the Terminal.
+            
+            - **Post-Quantum KEM**: NIST FIPS 203 ML-KEM-768/1024 + Classical RFC 7748 X25519 (X-Wing profile)
+            - **Streaming AEAD**: In-memory chunked streaming (1 MiB ceiling) without intermediate plaintext staging
+            - **Cross-Platform**: Windows, macOS (Intel & Apple Silicon), Linux
+            
+            Verify integrity with the provided SHA-256 checksums.
+          draft: false
+          prerelease: ${{ steps.release_gate.outputs.is_prerelease == 'true' }}
           generate_release_notes: true

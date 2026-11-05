@@ -1,19 +1,66 @@
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use colored::*;
+use indicatif::{ProgressBar, ProgressStyle};
 use inquire::{Password, PasswordDisplayMode};
+use ombracrypt::{fs_guard, pipeline};
+use std::io::{stdin, IsTerminal};
+use std::path::{Path, PathBuf};
 use std::process;
-
-mod crypto;
-mod deception;
-mod pipeline;
 
 #[derive(Parser)]
 #[command(name = "ombracrypt")]
-#[command(version = "0.4.4")]
-#[command(about = "The zero-trust quantum vault, built for the terminal.", long_about = None)]
+#[command(version = "2.0.0")]
+#[command(
+    about = "Offline Post-Quantum Hybrid Cryptographic Vault for the Terminal",
+    long_about = "Ombracrypt is a local-first, zero-escrow post-quantum cryptographic vault engineered\n\
+                  to protect files against contemporary interception and 'Harvest Now, Decrypt Later' (HNDL) attacks.\n\
+                  It combines hybrid ML-KEM with classical X25519 and bounded in-memory AEAD streaming."
+)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]
+enum CipherChoice {
+    #[value(name = "xchacha20")]
+    XChaCha20,
+    #[value(name = "aes256gcm")]
+    Aes256Gcm,
+}
+
+impl ToString for CipherChoice {
+    fn to_string(&self) -> String {
+        match self {
+            CipherChoice::XChaCha20 => "xchacha20".to_string(),
+            CipherChoice::Aes256Gcm => "aes256gcm".to_string(),
+        }
+    }
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]
+enum KemChoice {
+    #[value(name = "xwing")]
+    XWing,
+    #[value(name = "cypherpunk")]
+    Cypherpunk,
+}
+
+impl ToString for KemChoice {
+    fn to_string(&self) -> String {
+        match self {
+            KemChoice::XWing => "xwing".to_string(),
+            KemChoice::Cypherpunk => "cypherpunk".to_string(),
+        }
+    }
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]
+enum InspectMode {
+    #[value(name = "encrypt")]
+    Encrypt,
+    #[value(name = "decrypt")]
+    Decrypt,
 }
 
 #[derive(Subcommand)]
@@ -22,119 +69,549 @@ enum Commands {
     Encrypt {
         /// Path to the target file or directory
         #[arg(short, long)]
-        target: String,
+        target: PathBuf,
 
-        /// Symmetric cipher: 'aes256gcm' or 'xchacha20'
-        #[arg(short, long, value_parser = ["aes256gcm", "xchacha20"], default_value = "aes256gcm")]
-        cipher: String,
+        /// Output directory for the encrypted vault (.obv) [default: parent of target]
+        #[arg(short, long)]
+        output_dir: Option<PathBuf>,
 
-        /// KEM Profile: 'xwing' or 'cypherpunk'
-        #[arg(short, long, value_parser = ["xwing", "cypherpunk"], default_value = "cypherpunk")]
-        kem: String,
+        /// Destination folder for generated keypair (.obk/.obp) [default: same as output-dir]
+        #[arg(short = 'k', long)]
+        key_dir: Option<PathBuf>,
+
+        /// Path to an existing Public Key (.obp) to seal against (omits .obk generation)
+        #[arg(short = 'p', long)]
+        public_key: Option<PathBuf>,
+
+        /// Symmetric cipher: 'xchacha20' (default) or 'aes256gcm'
+        #[arg(short, long, value_enum, default_value_t = CipherChoice::XChaCha20)]
+        cipher: CipherChoice,
+
+        /// Post-Quantum KEM Profile: 'xwing' (ML-KEM-768, default) or 'cypherpunk' (ML-KEM-1024)
+        #[arg(short = 'm', long, value_enum, default_value_t = KemChoice::XWing)]
+        kem: KemChoice,
+
+        /// Path to a file containing the Master Password
+        #[arg(long)]
+        password_file: Option<PathBuf>,
+
+        /// Name of the environment variable containing the Master Password
+        #[arg(long)]
+        password_env: Option<String>,
+
+        /// Path to a file containing the Deception Passcode
+        #[arg(long)]
+        deception_passcode_file: Option<PathBuf>,
+
+        /// Name of the environment variable containing the Deception Passcode
+        #[arg(long)]
+        deception_passcode_env: Option<String>,
+
+        /// Suppress interactive banners and progress displays
+        #[arg(short, long)]
+        quiet: bool,
     },
-    /// Decrypt a Quantum-Safe Vault (.obv) using your Ombracrypt Key (.obk)
+
+    /// Decrypt a Quantum-Safe Vault (.obv) using your Private Key (.obk)
     Decrypt {
         /// Path to the encrypted vault (.obv)
         #[arg(short, long)]
-        target: String,
+        target: PathBuf,
 
-        /// Path to the Ombracrypt Key (.obk)
+        /// Path to the Private Key (.obk)
         #[arg(short, long)]
-        key: String,
+        key: PathBuf,
+
+        /// Directory where extracted contents should be published [default: parent of vault]
+        #[arg(short, long)]
+        output_dir: Option<PathBuf>,
+
+        /// Path to a file containing the Master Password
+        #[arg(long)]
+        password_file: Option<PathBuf>,
+
+        /// Name of the environment variable containing the Master Password
+        #[arg(long)]
+        password_env: Option<String>,
+
+        /// Suppress interactive banners and progress displays
+        #[arg(short, long)]
+        quiet: bool,
+    },
+
+    /// Generate a standalone reusable Keypair (.obp Public Key + .obk Private Key)
+    Keygen {
+        /// Base filename stem for the keypair files
+        #[arg(short, long)]
+        name: String,
+
+        /// Directory where the keypair files should be saved [default: current directory]
+        #[arg(short, long)]
+        output_dir: Option<PathBuf>,
+
+        /// KEM Profile: 'xwing' (ML-KEM-768, default) or 'cypherpunk' (ML-KEM-1024)
+        #[arg(short = 'm', long, value_enum, default_value_t = KemChoice::XWing)]
+        kem: KemChoice,
+
+        /// Path to a file containing the Deception Passcode
+        #[arg(long)]
+        deception_passcode_file: Option<PathBuf>,
+
+        /// Name of the environment variable containing the Deception Passcode
+        #[arg(long)]
+        deception_passcode_env: Option<String>,
+
+        /// Suppress interactive banners
+        #[arg(short, long)]
+        quiet: bool,
+    },
+
+    /// Reclaim and purge orphaned Ombracrypt staging directories (.ombracrypt_stage_*)
+    Clean {
+        /// Target folder to inspect and clean [default: current directory]
+        #[arg(short = 'd', long)]
+        target_dir: Option<PathBuf>,
+
+        /// Suppress output unless errors occur
+        #[arg(short, long)]
+        quiet: bool,
+    },
+
+    /// Pre-flight disk space telemetry and path conflict assessment
+    Inspect {
+        /// Operation mode to inspect: 'encrypt' or 'decrypt'
+        #[arg(short, long, value_enum)]
+        mode: InspectMode,
+
+        /// Path to the source target (folder/file to encrypt, or .obv vault to decrypt)
+        #[arg(short, long)]
+        target: PathBuf,
+
+        /// Output destination directory [default: parent of target or current directory]
+        #[arg(short, long)]
+        output_dir: Option<PathBuf>,
+
+        /// Key directory (for encrypt) or key file path (for decrypt / public key sealing)
+        #[arg(short, long)]
+        key: Option<PathBuf>,
+
+        /// Output assessment results in JSON format
+        #[arg(long)]
+        json: bool,
     },
 }
 
-fn print_header(mode: &str, target: &str) {
-    println!("\n{} {}", "::".magenta(), "OMBRACRYPT QUANTUM VAULT".bold().cyan());
-    println!("   {}", "Copyright © 2026 Abhishek Biswas (Ombraveil). All rights reserved.".bright_black());
+fn print_banner(operation: &str, target: &str, quiet: bool) {
+    if quiet {
+        return;
+    }
+    println!("\n{} {}", "::".magenta(), "OMBRACRYPT QUANTUM VAULT [v2.0.0]".bold().cyan());
+    println!("   {}", "Post-Quantum Hybrid Cryptographic Vault (CAL-1.0)".bright_black());
     println!("{}", "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━".bright_black());
-    println!("{} {}", "▶ Operation:".bright_black(), mode.bold().green());
+    println!("{} {}", "▶ Operation:".bright_black(), operation.bold().green());
     println!("{} {}", "▶ Target:   ".bright_black(), target.bold());
     println!("{}", "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n".bright_black());
+}
+
+fn resolve_smart_output_dir(target: &Path, explicit: Option<PathBuf>) -> PathBuf {
+    if let Some(dir) = explicit {
+        return dir;
+    }
+    target
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."))
+}
+
+fn fetch_credential(
+    prompt_label: &str,
+    confirm_label: Option<&str>,
+    file_path: Option<&Path>,
+    custom_env: Option<&str>,
+    default_env: &str,
+    is_optional: bool,
+) -> Result<String, String> {
+    // 1. Direct file input
+    if let Some(path) = file_path {
+        let content = std::fs::read_to_string(path)
+            .map_err(|e| format!("Failed to read credential file '{}': {}", path.display(), e))?;
+        return Ok(content.trim_end_matches(['\r', '\n']).to_string());
+    }
+
+    // 2. Custom environment variable
+    if let Some(var_name) = custom_env {
+        if let Ok(val) = std::env::var(var_name) {
+            return Ok(val);
+        }
+    }
+
+    // 3. Default environment variable
+    if let Ok(val) = std::env::var(default_env) {
+        if !val.is_empty() || is_optional {
+            return Ok(val);
+        }
+    }
+
+    // 4. Stdin pipe (non-TTY automated environment)
+    if !stdin().is_terminal() {
+        let mut buffer = String::new();
+        if stdin().read_line(&mut buffer).is_ok() {
+            let trimmed = buffer.trim_end_matches(['\r', '\n']).to_string();
+            if !trimmed.is_empty() || is_optional {
+                return Ok(trimmed);
+            }
+        }
+        if is_optional {
+            return Ok(String::new());
+        }
+        return Err("Required credential was not provided and standard input is not a terminal.".to_string());
+    }
+
+    // 5. Interactive masked prompt on terminal
+    loop {
+        let pass = Password::new(prompt_label)
+            .with_display_mode(PasswordDisplayMode::Masked)
+            .without_confirmation()
+            .prompt()
+            .map_err(|_| "Operation cancelled by user.".to_string())?;
+
+        if pass.trim().is_empty() {
+            if is_optional {
+                return Ok(String::new());
+            }
+            eprintln!("{}", "✖ ERROR: Master Password cannot be blank or whitespace only!\n".red());
+            continue;
+        }
+
+        if let Some(conf_msg) = confirm_label {
+            let confirm = Password::new(conf_msg)
+                .with_display_mode(PasswordDisplayMode::Masked)
+                .without_confirmation()
+                .prompt()
+                .map_err(|_| "Operation cancelled by user.".to_string())?;
+
+            if pass != confirm {
+                eprintln!("{}", "✖ ERROR: Passwords do not match. Please try again.\n".red());
+                continue;
+            }
+        }
+
+        return Ok(pass);
+    }
+}
+
+fn create_progress_reporter(quiet: bool) -> (Option<ProgressBar>, Box<dyn Fn(u8) + Send + Sync>) {
+    if quiet || !std::io::stdout().is_terminal() {
+        let cb = Box::new(|_| {});
+        return (None, cb);
+    }
+
+    let pb = ProgressBar::new(100);
+    pb.set_style(
+        ProgressStyle::default_bar()
+            .template("{spinner:.green} [{elapsed_precise}] [{bar:38.cyan/blue}] {pos}% {msg}")
+            .expect("Valid progress template")
+            .progress_chars("━╸ "),
+    );
+    pb.set_message("Processing cryptographic pipeline...");
+
+    let pb_clone = pb.clone();
+    let cb = Box::new(move |percent: u8| {
+        pb_clone.set_position(percent as u64);
+        if percent == 100 {
+            pb_clone.finish_and_clear();
+        }
+    });
+
+    (Some(pb), cb)
 }
 
 fn main() {
     let cli = Cli::parse();
 
-    match &cli.command {
-        Commands::Encrypt { target, cipher, kem } => {
-            print_header("Encrypt (Lock)", target);
-            
-            let main_pin = loop {
-                let pin = Password::new("Enter Master Password:")
-                    .with_display_mode(PasswordDisplayMode::Masked)
-                    .without_confirmation()
-                    .prompt()
-                    .unwrap_or_else(|_| process::exit(1));
+    match cli.command {
+        Commands::Encrypt {
+            target,
+            output_dir,
+            key_dir,
+            public_key,
+            cipher,
+            kem,
+            password_file,
+            password_env,
+            deception_passcode_file,
+            deception_passcode_env,
+            quiet,
+        } => {
+            let target_str = target.to_string_lossy().to_string();
+            print_banner("ENCRYPT (Quantum Lock)", &target_str, quiet);
 
-                if pin.trim().is_empty() {
-                    println!("{}", "✖ ERROR: Master Password cannot be blank!\n".red());
-                    continue;
-                }
+            let out_dir = resolve_smart_output_dir(&target, output_dir);
+            let out_dir_str = out_dir.to_string_lossy().to_string();
 
-                let confirm = Password::new("Confirm Master Password:")
-                    .with_display_mode(PasswordDisplayMode::Masked)
-                    .without_confirmation()
-                    .prompt()
-                    .unwrap_or_else(|_| process::exit(1));
-                
-                if pin == confirm {
-                    break pin;
-                }
-                println!("{}", "✖ ERROR: Passwords do not match. Please try again.\n".red());
-            };
-                
-            let deception_passcode = loop {
-                let d_pin = Password::new("Enter Deception Passcode (Press ENTER to skip):")
-                    .with_display_mode(PasswordDisplayMode::Masked)
-                    .without_confirmation()
-                    .prompt()
-                    .unwrap_or_else(|_| process::exit(1));
-
-                if d_pin.is_empty() {
-                    break d_pin;
-                }
-
-                if d_pin == main_pin {
-                    println!("{}", "✖ CRITICAL ERROR: Deception Passcode CANNOT be the same as your Master Password!\n".red());
-                    continue;
-                }
-
-                let confirm = Password::new("? Confirm Deception Passcode:")
-                    .with_display_mode(PasswordDisplayMode::Masked)
-                    .without_confirmation()
-                    .prompt()
-                    .unwrap_or_else(|_| process::exit(1));
-                
-                if d_pin == confirm {
-                    break d_pin;
-                }
-                println!("{}", "✖ ERROR: Deception Passcodes do not match. Please try again.\n".red());
+            let use_existing_public_key = public_key.is_some();
+            let key_location = if let Some(ref pub_key) = public_key {
+                pub_key.to_string_lossy().to_string()
+            } else {
+                let k_dir = key_dir.unwrap_or_else(|| out_dir.clone());
+                k_dir.to_string_lossy().to_string()
             };
 
-            println!("\n{}", "> Initializing Engine...".bold().yellow());
-            match pipeline::encrypt_vault(target, cipher, kem, &main_pin, &deception_passcode) {
-                Ok(msg) => println!("\n{} {}\n", "✔".green(), msg.bold().green()),
+            // Ingest Master Password
+            let main_pin = match fetch_credential(
+                "Enter Master Password:",
+                Some("Confirm Master Password:"),
+                password_file.as_deref(),
+                password_env.as_deref(),
+                "OMBRACRYPT_PASSWORD",
+                false,
+            ) {
+                Ok(p) => p,
+                Err(e) => {
+                    eprintln!("{} {}\n", "✖ ERROR:".red(), e.red());
+                    process::exit(1);
+                }
+            };
+
+            // Ingest Deception Passcode (only if generating keypair)
+            let deception_passcode = if use_existing_public_key {
+                String::new()
+            } else {
+                match fetch_credential(
+                    "Enter Deception Passcode (Press ENTER to skip):",
+                    Some("Confirm Deception Passcode:"),
+                    deception_passcode_file.as_deref(),
+                    deception_passcode_env.as_deref(),
+                    "OMBRACRYPT_DECEPTION_PASSCODE",
+                    true,
+                ) {
+                    Ok(p) => {
+                        if !p.is_empty() && p == main_pin {
+                            eprintln!(
+                                "{} {}\n",
+                                "✖ CRITICAL ERROR:".red(),
+                                "Deception Passcode CANNOT match Master Password!".red()
+                            );
+                            process::exit(1);
+                        }
+                        p
+                    }
+                    Err(e) => {
+                        eprintln!("{} {}\n", "✖ ERROR:".red(), e.red());
+                        process::exit(1);
+                    }
+                }
+            };
+
+            if !quiet {
+                println!("{}", "▶ Initializing Streaming Cryptographic Pipeline...".bold().yellow());
+            }
+
+            let (_pb, progress_cb) = create_progress_reporter(quiet);
+            let progress_ref: &dyn Fn(u8) = &*progress_cb;
+
+            match pipeline::encrypt_vault(
+                &target_str,
+                &out_dir_str,
+                &key_location,
+                use_existing_public_key,
+                &cipher.to_string(),
+                &kem.to_string(),
+                &main_pin,
+                &deception_passcode,
+                None,
+                Some(progress_ref),
+            ) {
+                Ok(msg) => {
+                    println!("\n{} {}\n", "✔".green(), msg.bold().green());
+                }
                 Err(e) => {
                     eprintln!("\n{} {}\n", "✖ ERROR:".red(), e.red());
                     process::exit(1);
                 }
             }
         }
-        Commands::Decrypt { target, key } => {
-            print_header("Decrypt (Unlock)", target);
-            
-            let main_pin = Password::new("Enter Master Password:")
-                .with_display_mode(PasswordDisplayMode::Masked)
-                .without_confirmation()
-                .prompt()
-                .unwrap_or_else(|_| process::exit(1));
-            
-            println!("\n{}", "> Initializing Engine...".bold().yellow());
-            match pipeline::decrypt_vault(target, Some(key), &main_pin, "") {
-                Ok(msg) => println!("\n{} {}\n", "✔".green(), msg.bold().green()),
+
+        Commands::Decrypt {
+            target,
+            key,
+            output_dir,
+            password_file,
+            password_env,
+            quiet,
+        } => {
+            let target_str = target.to_string_lossy().to_string();
+            let key_str = key.to_string_lossy().to_string();
+            print_banner("DECRYPT (Quantum Unlock)", &target_str, quiet);
+
+            let out_dir = resolve_smart_output_dir(&target, output_dir);
+            let out_dir_str = out_dir.to_string_lossy().to_string();
+
+            let main_pin = match fetch_credential(
+                "Enter Master Password:",
+                None,
+                password_file.as_deref(),
+                password_env.as_deref(),
+                "OMBRACRYPT_PASSWORD",
+                false,
+            ) {
+                Ok(p) => p,
+                Err(e) => {
+                    eprintln!("{} {}\n", "✖ ERROR:".red(), e.red());
+                    process::exit(1);
+                }
+            };
+
+            if !quiet {
+                println!("{}", "▶ Authenticating Header & Initializing Decryption Engine...".bold().yellow());
+            }
+
+            let (_pb, progress_cb) = create_progress_reporter(quiet);
+            let progress_ref: &dyn Fn(u8) = &*progress_cb;
+
+            match pipeline::decrypt_vault(
+                &target_str,
+                Some(&key_str),
+                &out_dir_str,
+                &main_pin,
+                None,
+                Some(progress_ref),
+            ) {
+                Ok(msg) => {
+                    println!("\n{} {}\n", "✔".green(), msg.bold().green());
+                }
                 Err(e) => {
                     eprintln!("\n{} {}\n", "✖ ERROR:".red(), e.red());
+                    process::exit(1);
+                }
+            }
+        }
+
+        Commands::Keygen {
+            name,
+            output_dir,
+            kem,
+            deception_passcode_file,
+            deception_passcode_env,
+            quiet,
+        } => {
+            print_banner("KEYGEN (Generate Reusable Keypair)", &name, quiet);
+
+            let out_dir = output_dir.unwrap_or_else(|| PathBuf::from("."));
+            let out_dir_str = out_dir.to_string_lossy().to_string();
+
+            let deception_passcode = match fetch_credential(
+                "Enter Deception Passcode for Duress Trapdoor (Press ENTER to skip):",
+                Some("Confirm Deception Passcode:"),
+                deception_passcode_file.as_deref(),
+                deception_passcode_env.as_deref(),
+                "OMBRACRYPT_DECEPTION_PASSCODE",
+                true,
+            ) {
+                Ok(p) => p,
+                Err(e) => {
+                    eprintln!("{} {}\n", "✖ ERROR:".red(), e.red());
+                    process::exit(1);
+                }
+            };
+
+            match pipeline::generate_standalone_keypair(
+                &out_dir_str,
+                &name,
+                &kem.to_string(),
+                &deception_passcode,
+            ) {
+                Ok(msg) => {
+                    println!("\n{} {}\n", "✔".green(), msg.bold().green());
+                }
+                Err(e) => {
+                    eprintln!("\n{} {}\n", "✖ ERROR:".red(), e.red());
+                    process::exit(1);
+                }
+            }
+        }
+
+        Commands::Clean { target_dir, quiet } => {
+            let target = target_dir.unwrap_or_else(|| PathBuf::from("."));
+            if !quiet {
+                println!(
+                    "{} {}",
+                    "▶ Scanning directory for orphaned staging artifacts:".cyan(),
+                    target.display()
+                );
+            }
+
+            match fs_guard::clean_scoped_staging_dir(&target) {
+                Ok((count, freed_bytes)) => {
+                    if count == 0 {
+                        if !quiet {
+                            println!("{} Selected folder is clean (0 staging remnants found).", "✔".green());
+                        }
+                    } else {
+                        println!(
+                            "{} Successfully cleaned {} staging artifact(s) ({:.2} MB reclaimed).",
+                            "✔".green(),
+                            count,
+                            freed_bytes as f64 / 1_048_576.0
+                        );
+                    }
+                }
+                Err(e) => {
+                    eprintln!("{} {}\n", "✖ ERROR:".red(), e.red());
+                    process::exit(1);
+                }
+            }
+        }
+
+        Commands::Inspect {
+            mode,
+            target,
+            output_dir,
+            key,
+            json,
+        } => {
+            let mode_str = match mode {
+                InspectMode::Encrypt => "ENCRYPT",
+                InspectMode::Decrypt => "DECRYPT",
+            };
+
+            let out_dir = resolve_smart_output_dir(&target, output_dir);
+            let target_str = target.to_string_lossy().to_string();
+            let out_dir_str = out_dir.to_string_lossy().to_string();
+            let key_str = key.as_ref().map(|k| k.to_string_lossy().to_string());
+
+            match fs_guard::assess_storage_and_paths(
+                mode_str,
+                &target_str,
+                &out_dir_str,
+                key_str.as_deref(),
+            ) {
+                Ok(assessment) => {
+                    if json {
+                        let json_str = serde_json::to_string_pretty(&assessment)
+                            .unwrap_or_else(|_| "{}".to_string());
+                        println!("{}", json_str);
+                    } else {
+                        println!("\n{} {}", "::".magenta(), "OMBRACRYPT PRE-FLIGHT STORAGE ASSESSMENT".bold().cyan());
+                        println!("{}", "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━".bright_black());
+                        println!("{} {}", "▶ Mode:              ".bright_black(), mode_str.bold());
+                        println!("{} {}", "▶ Target:            ".bright_black(), target.display());
+                        println!("{} {}", "▶ Destination:       ".bright_black(), out_dir.display());
+                        println!("{} {:.2} MB", "▶ Required Free:     ".bright_black(), assessment.required_bytes as f64 / 1_048_576.0);
+                        println!("{} {:.2} MB", "▶ Available Free:    ".bright_black(), assessment.available_bytes as f64 / 1_048_576.0);
+                        println!("{} {}", "▶ Sufficient Space:  ".bright_black(), if assessment.sufficient { "YES".green().bold() } else { "NO".red().bold() });
+                        if let Some(ref conflict) = assessment.conflict_error {
+                            println!("{} {}", "▶ Conflict Detected: ".red().bold(), conflict.red());
+                        } else {
+                            println!("{} {}", "▶ Path Conflicts:    ".bright_black(), "None (Clear)".green());
+                        }
+                        println!("{} {}", "▶ Summary:           ".bright_black(), assessment.summary);
+                        println!("{}", "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n".bright_black());
+                    }
+                }
+                Err(e) => {
+                    eprintln!("{} {}\n", "✖ ERROR:".red(), e.red());
                     process::exit(1);
                 }
             }

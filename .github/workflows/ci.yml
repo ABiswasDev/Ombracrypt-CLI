@@ -1,0 +1,37 @@
+name: Ombracrypt CLI Security & CI Suite
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  rust-security-suite:
+    name: Security & Conformance Suite (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-latest, macos-latest]
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Rust Stable Toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo Build Artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Verify Compilation & Warnings
+        run: cargo check --all-targets
+
+      - name: Run Security & Conformance Suite
+        run: cargo test --release -- --nocapture
+
