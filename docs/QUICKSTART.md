@@ -1,64 +1,429 @@
-# Ombracrypt Quick Start Guide
+# Ombracrypt CLI Quickstart & Operational Manual
 
-This guide will walk you through the fundamental steps of securing your data using Ombracrypt's post-quantum encryption engine. 
+Welcome to the **Ombracrypt CLI** operational guide. This document provides step-by-step instructions for installing, configuring, and operating every feature of the Ombracrypt terminal application.
 
-## How to Encrypt Your Data
+Ombracrypt is an offline, zero-telemetry, post-quantum hybrid cryptographic vault engineered for terminal power users, automation pipelines, and headless servers. It maintains **100% bit-for-bit container parity with the Ombracrypt Desktop GUI (v2)**. Any vault (`.obv`) or key (`.obp`/`.obk`) created by the CLI can be seamlessly authenticated and extracted by the GUI, and vice versa.
 
-**Step 1: Algorithm & Password Configuration**
-Launch the Ombracrypt application. Select your preferred **Cipher Algorithm** (e.g., AES-256-GCM) and **KEM Algorithm** (e.g., Cypherpunk Max) from the dropdown menus. Enter a strong, memorable master password. If your threat model requires it, you may also configure a **Deception Passcode** under the Advanced Security Options.
+---
 
-<p align="center">
-  <img src="../images/enc1.png" alt="Ombracrypt Algorithm Configuration" width="450">
-</p>
+## Table of Contents
 
-**Step 2: Target Selection**
-Click the **Encrypt Folder** button. This will open your native system file explorer. Navigate to and select the specific directory containing the data you wish to encrypt. In this example, we are selecting a directory named `My Data` located on an external drive.
+1. [Installation & Setup](#1-installation--setup)
+2. [Command Surface Overview](#2-command-surface-overview)
+3. [Step 1: Pre-Flight Storage & Path Inspection (`inspect`)](#3-step-1-pre-flight-storage--path-inspection-inspect)
+4. [Step 2: Locking Data into a Quantum Vault (`encrypt`)](#4-step-2-locking-data-into-a-quantum-vault-encrypt)
+   * [Mode A: Encrypt with Fresh Keypair Generation](#mode-a-encrypt-with-fresh-keypair-generation-obp--obk)
+   * [Mode B: One-Way Sealing to a Public Key](#mode-b-one-way-sealing-to-a-recipient-public-key-obp)
+5. [Step 3: Unlocking & Extracting a Vault (`decrypt`)](#5-step-3-unlocking--extracting-a-vault-decrypt)
+6. [Step 4: Provisioning Standalone Keypairs (`keygen`)](#6-step-4-provisioning-standalone-keypairs-keygen)
+7. [Step 5: Reclaiming Staging Remnants (`clean`)](#7-step-5-reclaiming-staging-remnants-clean)
+8. [Anti-Coercion: Duress Trapdoor Protocol](#8-anti-coercion-duress-trapdoor-protocol)
+9. [Automation, Scripting & Headless Pipelines](#9-automation-scripting--headless-pipelines)
+10. [Troubleshooting & Security Invariants](#10-troubleshooting--security-invariants)
 
-<p align="center">
-  <img src="../images/enc2.png" alt="Selecting the Target Directory" width="600">
-</p>
+---
 
-**Step 3: Path Verification & Execution**
-the application will display the target encryption path (e.g., `/media/abby/E8DF-98B9/My data`). Verify this path carefully to ensure you are encrypting the correct data—everything inside this selected folder will be secured. Click the **Lock Vault** button to begin. A progress bar will appear at the bottom of the interface; execution time will vary based on your payload size and the selected cryptographic algorithms.
+## 1. Installation & Setup
 
-<p align="center">
-  <img src="../images/enc3.png" alt="Verifying Path and Locking Vault" width="450">
-</p>
+### Pre-Compiled Standalone Binaries
+Download the official standalone release for your platform from the [GitHub Releases](https://github.com/ABiswasDev/ombracrypt-cli/releases) page:
 
-**Step 4: Successful Completion**
-Upon completion, the progress bar will finalize, and a green success message will appear at the bottom of the application confirming: *"Operation Successful: Vault securely locked (.obv) and Quantum Key (.obk) generated."*
+* **Linux (x86_64):** `ombracrypt-v2.0.0-linux-x64.tar.gz`
+* **macOS Apple Silicon (ARM64):** `ombracrypt-v2.0.0-macos-arm64.tar.gz`
+* **macOS Intel (x86_64):** `ombracrypt-v2.0.0-macos-x64.tar.gz`
+* **Windows (x86_64):** `ombracrypt-v2.0.0-windows-x64.zip`
 
-<p align="center">
-  <img src="../images/enc4.png" alt="Encryption Successful" width="450">
-</p>
+#### Linux & macOS Installation
+```bash
+# 1. Unpack the tarball
+tar -xvf ombracrypt-v2.0.0-linux-x64.tar.gz
 
-**Step 5: Output & Key Separation**
-Open your system file explorer and navigate to the directory where your original folder was located. You will now see two newly generated files: your encrypted vault (`My data.obv`) and your cryptographic key (`My data.obk`). 
+# 2. Grant execution permissions
+chmod +x ombracrypt
 
-**Crucial Security Step:** Your vault (`.obv`) is now quantum-secure and can be safely uploaded to the cloud or transmitted over untrusted networks. However, you **must** move the `.obk` key file to a physically and logically separate, highly secure location (such as an offline USB flash drive). Without *both* the `.obk` file and your master password, the vault cannot be decrypted by anyone.
+# 3. Move the binary into your system PATH
+sudo mv ombracrypt /usr/local/bin/
 
-## How to Decrypt Your Data
+# 4. Verify installation
+ombracrypt --version
+```
 
-**Step 1: Selecting Your Assets**
-Launch the Ombracrypt application and select the **Decrypt Vault** option. You will need to provide both your encrypted vault file (`.obv`) and your mathematically linked Ombracrypt Quantum Key (`.obk`). 
+#### Windows Installation
+Extract `ombracrypt.exe` from the `.zip` archive into a folder of your choice (e.g., `C:\Tools\Ombracrypt`), and add that folder to your system `PATH`, or invoke it directly from PowerShell or Command Prompt:
+```powershell
+.\ombracrypt.exe --version
+```
 
-**Step 2: Path Verification**
-Check the file paths displayed in the upper section of the decryption module. Confirm that the correct `.obv` and `.obk` files are loaded before proceeding.
+### Compiling from Source
+If you prefer building from source, ensure you have the latest stable [Rust toolchain](https://rustup.rs/) installed:
+```bash
+git clone https://github.com/ABiswasDev/ombracrypt-cli.git
+cd ombracrypt-cli
 
-**Step 3: Execution and Output**
-Enter your standard master password and execute the decryption. The engine will process the vault and output your fully decrypted original folder to the exact same directory where your `.obv` vault file is currently located.
+# Run compilation check & full 54-test cryptographic suite
+cargo check --all-targets
+cargo test --release -- --nocapture
 
-<div align="center">
-  <img src="../images/dec1.png" alt="Ombracrypt Decryption Interface" width="450">
-</div>
+# Compile the release binary
+cargo build --release
+```
+The compiled executable will be located at `./target/release/ombracrypt`.
 
-> **⚠️ Critical Feature: Deception Passcode (Duress Code)**
->
-> The Deception Passcode is a specialized cryptographic zeroization failsafe designed for extreme threat models, specifically for situations where you are under physical coercion and being forced to unlock your vault. Because this mechanism is destructive, it is vital to understand exactly how it operates:
->
-> * **The Scenario:** If a hostile actor forces you to decrypt your data, you will launch the Ombracrypt decryption interface exactly as you normally would.
-> * **The Action:** When prompted for your credentials, you will input your pre-configured **Deception Passcode** *instead* of your actual Master Password.
-> * **The Execution:** The application will intentionally throw a "password mismatch" error to deceive the intruder into thinking a simple typo occurred. Simultaneously in the background, the engine will instantly tamper with the `.obk` (Quantum Key) file. It permanently scrambles the internal cryptographic key material while leaving the file's external metadata and structure completely intact.
-> * **The Result:** Because Ombracrypt utilizes a split-key architecture, the zeroization of the `.obk` payload instantly breaks the cryptographic chain. To the attacker, the key file still appears to be physically present, but the `.obv` (Encrypted Vault) file is now permanently mathematically inaccessible to everyone—including you and the attacker.
-> 
-> **Important:** This action is strictly irreversible. Activating the Deception Passcode permanently neutralizes the threat by destroying the internal keys to your data, so it should only be triggered in absolute emergencies.
+---
+
+## 2. Command Surface Overview
+
+Ombracrypt CLI provides five dedicated subcommands designed for high-security workflows:
+
+| Subcommand | Primary Operational Purpose |
+| :--- | :--- |
+| **`inspect`** | Evaluates required vs available disk capacity and detects filesystem path collisions prior to execution. |
+| **`encrypt`** | Streams a directory or file into an authenticated `.obv` vault via bounded memory AEAD streaming. |
+| **`decrypt`** | Authenticates and decapsulates an `.obv` vault using an `.obk` private key, extracting contents directly in memory. |
+| **`keygen`** | Generates standalone, reusable public sealing keys (`.obp`) and private decapsulation keys (`.obk`). |
+| **`clean`** | Scans and reclaims abandoned `.ombracrypt_stage_*` staging folders following interruptions or crashes. |
+
+To inspect options for any command, append `--help`:
+```bash
+ombracrypt encrypt --help
+ombracrypt decrypt --help
+```
+
+---
+
+## 3. Step 1: Pre-Flight Storage & Path Inspection (`inspect`)
+
+Before initiating encryption on massive datasets or extracting gigabyte-sized vaults, run `inspect` to verify storage capacity and prevent out-of-disk crashes.
+
+```bash
+# Inspecting an encryption operation:
+ombracrypt inspect --mode encrypt --target "/home/user/Documents/Financials"
+
+# Inspecting a decryption operation:
+ombracrypt inspect \
+  --mode decrypt \
+  --target "/backups/Financials.obv" \
+  --key "/keys/Financials.obk" \
+  --output-dir "/restores"
+```
+
+### Human-Readable Output Example
+```plaintext
+:: OMBRACRYPT PRE-FLIGHT STORAGE ASSESSMENT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+▶ Mode:               ENCRYPT
+▶ Target:             /home/user/Documents/Financials
+▶ Destination:        /home/user/Documents
+▶ Required Free:      124.50 MB
+▶ Available Free:     48120.25 MB
+▶ Sufficient Space:   YES
+▶ Path Conflicts:     None (Clear)
+▶ Summary:            Required: 124.50 MB | Available: 48120.25 MB
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+```
+
+### Scripting with Machine-Readable JSON
+For automation scripts, pass the `--json` flag:
+```bash
+ombracrypt inspect --mode encrypt --target "/data/records" --json
+```
+```json
+{
+  "required_bytes": 130548121,
+  "available_bytes": 50458763264,
+  "raw_bytes": 128450110,
+  "item_count": 412,
+  "sufficient": true,
+  "conflict_error": null,
+  "key_fingerprint": null,
+  "summary": "Required: 124.50 MB | Available: 48120.25 MB"
+}
+```
+
+> [!NOTE]
+> If a file or folder of the same name already exists in the destination, `inspect` detects the collision and reports it under `conflict_error`.
+
+---
+
+## 4. Step 2: Locking Data into a Quantum Vault (`encrypt`)
+
+Ombracrypt encrypts files and entire directory trees **on-the-fly through bounded 1&nbsp;MiB in-process memory buffers** directly into authenticated AEAD ciphertext blocks. **No unencrypted `.tar` archive is ever written to disk.**
+
+### Mode A: Encrypt with Fresh Keypair Generation (`.obp` + `.obk`)
+
+This is the standard mode for personal storage and offline backups. It creates the encrypted vault (`.obv`) and generates a mathematically linked private decapsulation key (`.obk`) and public sealing key (`.obp`).
+
+```bash
+ombracrypt encrypt --target "/home/user/Documents/Financials"
+```
+
+#### Step-by-Step Interactive Flow:
+1. **Interactive Prompt:** The CLI prompts for a **Master Password** with masked entry (asterisks) and asks for confirmation.
+2. **Deception Passcode (Optional):** Prompts for an optional **Deception Passcode** (press `ENTER` to skip if not needed for your threat model).
+3. **Execution:** An animated `indicatif` progress bar displays streaming throughput and cryptographic milestone percentages.
+4. **Completion:** Upon success, three files are produced:
+   * `Financials.obv` — The authenticated encrypted vault.
+   * `Financials.obk` — Your offline private key (restricted to `0600` owner-only permissions).
+   * `Financials.obp` — The public key corresponding to this keypair.
+
+```plaintext
+:: OMBRACRYPT QUANTUM VAULT [v2.0.0]
+   Post-Quantum Hybrid Cryptographic Vault (CAL-1.0)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+▶ Operation: ENCRYPT (Quantum Lock)
+▶ Target:    /home/user/Documents/Financials
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+▶ Initializing Streaming Cryptographic Pipeline...
+[00:00:02] [━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━] 100% Processing cryptographic pipeline...
+
+✔ Operation Successful: Vault locked (.obv) & Keypair generated [Key ID: 3C78B2A1-94EF11D2-7CA88910-E2104F98].
+```
+
+#### Customizing Destination Directories & Algorithms:
+By default, the CLI places the vault and keys in the parent folder of the target. You can redirect them using `-o / --output-dir` and `-k / --key-dir`:
+```bash
+ombracrypt encrypt \
+  --target "/home/user/Documents/Financials" \
+  --output-dir "/mnt/secure_backup" \
+  --key-dir "/media/usb_key" \
+  --cipher xchacha20 \
+  --kem xwing
+```
+
+* `--cipher`: Choose between `xchacha20` *(default, XChaCha20-Poly1305)* and `aes256gcm` *(AES-256-GCM)*.
+* `--kem`: Choose between `xwing` *(default, NIST FIPS 203 ML-KEM-768 + X25519)* and `cypherpunk` *(NIST FIPS 203 ML-KEM-1024 + X25519)*.
+
+---
+
+### Mode B: One-Way Sealing to a Recipient Public Key (`.obp`)
+
+When encrypting data intended for another user, group, or backup server, you can seal the vault directly against their public key using `-p / --public-key`. 
+
+> [!IMPORTANT]
+> In this mode, **no private `.obk` key is generated**. The vault is mathematically sealed such that only the holder of the recipient's private key can decapsulate it.
+
+```bash
+ombracrypt encrypt \
+  --target "/data/quarterly_audit" \
+  --public-key "/keys/auditor_alice.obp" \
+  --output-dir "/exports"
+```
+
+1. The CLI loads the recipient's `.obp` key, validates its header (`OBPK\x02`), and encapsulates a fresh hybrid post-quantum shared secret.
+2. Prompts for a Master Password to derive the symmetric key-derivation layer.
+3. Streams the directory into `/exports/quarterly_audit.obv`.
+4. Only Alice (holding `auditor_alice.obk` and knowing the Master Password) can extract the vault.
+
+---
+
+## 5. Step 3: Unlocking & Extracting a Vault (`decrypt`)
+
+To decrypt and extract an `.obv` vault, provide both the vault file and your corresponding `.obk` private key:
+
+```bash
+ombracrypt decrypt \
+  --target "/mnt/secure_backup/Financials.obv" \
+  --key "/media/usb_key/Financials.obk"
+```
+
+#### Specifying Extraction Destination:
+By default, the decrypted directory is extracted into the parent directory of the vault. You can choose any destination using `-o / --output-dir`:
+```bash
+ombracrypt decrypt \
+  --target "/mnt/secure_backup/Financials.obv" \
+  --key "/media/usb_key/Financials.obk" \
+  --output-dir "/home/user/Restores"
+```
+
+#### Operational Guarantees During Decryption:
+* **In-Memory Streaming:** Decryption occurs on-the-fly. Ciphertext chunks (up to 1&nbsp;MiB) are decapsulated, verified via AEAD authentication tags with header hash AAD binding, and unpacked directly into target files.
+* **Zip-Slip & Symlink Immunity:** Defensive path sanitization rejects entries containing `..` or leading slashes, and verifies all paths remain inside the target staging directory.
+* **Atomic Directory Rename:** Decrypted contents are staged inside a secure temporary directory protected by an advisory lock (`.active.lock`). Only when the final chunk tag is verified and tar checksums match is the folder published atomically via `atomic_publish_dir_noreplace`.
+* **Zero Collision Overwrites:** If `/home/user/Restores/Financials` already exists, Ombracrypt aborts immediately without modifying existing files.
+
+---
+
+## 6. Step 4: Provisioning Standalone Keypairs (`keygen`)
+
+The `keygen` subcommand allows administrators and security teams to generate standalone post-quantum keypairs without encrypting a payload immediately.
+
+```bash
+# Generate a standard X-Wing keypair named 'alice'
+ombracrypt keygen --name "alice" --output-dir "/home/user/keys"
+
+# Generate a high-security Cypherpunk (ML-KEM-1024) keypair
+ombracrypt keygen --name "infrastructure_cold" --output-dir "/keys" --kem cypherpunk
+```
+
+### Resulting Files:
+* `alice.obp` (Public Sealing Key, 1,222 bytes) — Shareable with anyone who needs to encrypt files for Alice.
+* `alice.obk` (Private Decapsulation Key, 86 bytes) — Kept offline and secret by Alice.
+
+```plaintext
+:: OMBRACRYPT QUANTUM VAULT [v2.0.0]
+   Post-Quantum Hybrid Cryptographic Vault (CAL-1.0)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+▶ Operation: KEYGEN (Generate Reusable Keypair)
+▶ Target:    alice
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+✔ Generated Keypair (alice.obp + alice.obk) | Key ID: 7D45A2F9-C10283E4-AA82B019-3318CD21
+```
+
+> [!TIP]
+> The printed **Key ID** is a 128-bit SHA-256 fingerprint formatted as `XXXXXXXX-XXXXXXXX-XXXXXXXX-XXXXXXXX`. You can use it to verify key integrity across communication channels.
+
+---
+
+## 7. Step 5: Reclaiming Staging Remnants (`clean`)
+
+Ombracrypt uses isolated staging directories (`.ombracrypt_stage_<STEM>_<UUID>/`) guarded by OS-level file locks (`.active.lock`) to ensure transactional atomicity. If a machine experiences sudden power loss, hardware shutdown, or forceful termination (`kill -9`), orphaned staging remnants may remain.
+
+The `clean` command inspects target folders, checks advisory locks, and safely purges stale remnants without touching active transfers:
+
+```bash
+# Clean current directory
+ombracrypt clean
+
+# Clean a specific backup or mount directory
+ombracrypt clean --target-dir "/mnt/secure_backup"
+```
+
+```plaintext
+▶ Scanning directory for orphaned staging artifacts: /mnt/secure_backup
+✔ Successfully cleaned 2 staging artifact(s) (148.20 MB reclaimed).
+```
+
+> [!NOTE]
+> The cleaner strictly verifies that the directory matches Ombracrypt staging naming conventions, verifies that no other running process holds `.active.lock`, and preserves all non-staging files and symlinks.
+
+---
+
+## 8. Anti-Coercion: Duress Trapdoor Protocol
+
+Ombracrypt includes an interactive anti-coercion mechanism known as the **Duress Trapdoor**, engineered for scenarios where a user is under physical duress or hostile interrogation and compelled to provide decryption credentials.
+
+### How the Trapdoor Works
+1. **Configuration:** When encrypting a vault or running `keygen`, you can optionally enter a secondary **Deception Passcode** (which must be distinct from your Master Password).
+2. **The Threat Scenario:** An adversary physically compels you to unlock your vault (`Financials.obv`) with your key (`Financials.obk`).
+3. **The Duress Input:** When the CLI prompts for the Master Password, you enter your **Deception Passcode** instead.
+4. **The Silent Scramble:**
+   * The decapsulation engine detects the valid deception signature in the key's 32-byte phantom verification block.
+   * It immediately performs an in-place CSPRNG overwrite against the `.obk` file on disk, shredding the private key material with cryptographically secure random bytes (while verifying `st_nlink > 1` protection to prevent hardlink tampering).
+   * It flushes hardware buffers (`fsync`) and returns a generic failure message:
+     ```plaintext
+     ✖ ERROR: Decryption Failed! Data corruption or mismatched cryptographic key.
+     ```
+5. **The Outcome:** To the adversary, the file still exists on disk with identical file size and timestamps, appearing as though a normal password typo occurred. In reality, the post-quantum private key has been permanently destroyed. **The vault is mathematically unrecoverable by anyone, including the adversary and yourself.**
+
+> [!CAUTION]
+> Duress activation is strictly irreversible. Use this mechanism only in genuine emergencies.
+
+---
+
+## 9. Automation, Scripting & Headless Pipelines
+
+Ombracrypt CLI is fully equipped for unattended servers, CI/CD runners, and automated backup scripts.
+
+### 1. Ingesting Credentials via Environment Variables
+Set `OMBRACRYPT_PASSWORD` (and optionally `OMBRACRYPT_DECEPTION_PASSCODE`):
+
+```bash
+export OMBRACRYPT_PASSWORD="CorrectHorseBatteryStaple2026!"
+
+# Encrypt quietly (-q suppresses banners and progress bars)
+ombracrypt encrypt \
+  --target "/var/backups/db" \
+  --output-dir "/mnt/cold_storage" \
+  --quiet
+
+# Decrypt quietly
+ombracrypt decrypt \
+  --target "/mnt/cold_storage/db.obv" \
+  --key "/mnt/cold_storage/db.obk" \
+  --output-dir "/var/restore" \
+  --quiet
+```
+
+You can also specify custom variable names using `--password-env`:
+```bash
+ombracrypt encrypt \
+  --target "/var/backups/db" \
+  --password-env "PROD_VAULT_SECRET" \
+  --quiet
+```
+
+### 2. Ingesting Credentials via Files
+Store passcodes in permission-restricted files (e.g., `chmod 0400 /etc/vault.key`):
+```bash
+ombracrypt encrypt \
+  --target "/data/sensitive" \
+  --password-file "/etc/vault.key" \
+  --output-dir "/backups" \
+  --quiet
+```
+
+### 3. Ingesting Credentials via Standard Input (Pipes)
+When Ombracrypt detects that standard input is not a terminal TTY, it automatically consumes credentials from the pipe:
+```bash
+echo -n "MySuperSecurePassword" | ombracrypt encrypt \
+  --target "/data/payroll" \
+  --output-dir "/backups" \
+  --quiet
+```
+
+### 4. Automated Daily Backup Shell Script
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+TARGET_DIR="/opt/production_data"
+BACKUP_DIR="/mnt/encrypted_backups"
+PUBKEY="/root/keys/infrastructure_backup.obp"
+TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+
+echo "[+] Initiating Pre-Flight Assessment..."
+ombracrypt inspect --mode encrypt --target "$TARGET_DIR" --output-dir "$BACKUP_DIR" --json
+
+echo "[+] Sealing Post-Quantum Vault for $TIMESTAMP..."
+export OMBRACRYPT_PASSWORD="$(cat /root/secrets/vault_master.pass)"
+
+ombracrypt encrypt \
+  --target "$TARGET_DIR" \
+  --public-key "$PUBKEY" \
+  --output-dir "$BACKUP_DIR" \
+  --quiet
+
+echo "[✓] Backup completed successfully."
+```
+
+---
+
+## 10. Troubleshooting & Security Invariants
+
+### "Destination already exists in the output folder"
+* **Cause:** Ombracrypt enforces strict collision-proof atomic publication. It will never overwrite an existing vault, key, or extracted directory.
+* **Solution:** Specify an alternative `--output-dir`, or move/rename the existing directory before running the operation.
+
+### "Insufficient Disk Space to extract vault"
+* **Cause:** Pre-flight space estimation determined that the available free disk space on the target volume is smaller than the uncompressed vault payload.
+* **Solution:** Free space on the destination drive or mount an external drive with sufficient capacity.
+
+### "Invalid Private Key (.obk): Unrecognized header or corrupted file"
+* **Cause:** The supplied key file does not begin with `OBSK\x02` or has been truncated or corrupted.
+* **Note:** If the Duress Trapdoor was previously activated on this key, the header has been permanently overwritten with random noise.
+
+### "Operation aborted by user"
+* **Cause:** A `SIGINT` (Ctrl+C) signal was received.
+* **Safety:** Ombracrypt immediately intercepts cancellation, aborts file streaming, closes handles, and triggers rollback guards to delete incomplete staging artifacts. Run `ombracrypt clean` if necessary.
+
+---
+
+## Cross-Platform GUI Interoperability Checklist
+
+| Action | CLI Execution | Desktop GUI Action |
+| :--- | :--- | :--- |
+| **Open Vault in GUI** | `ombracrypt encrypt -t "/data"` | Drag `data.obv` and `data.obk` into Ombracrypt Desktop GUI → Enter password → Click **Unlock Vault**. |
+| **Open GUI Vault in CLI** | Encrypt folder in Desktop GUI | `ombracrypt decrypt -t "data.obv" -k "data.obk"` |
+| **Share Public Key** | `ombracrypt keygen -n "alice"` | Provide `alice.obp` to any GUI or CLI user to seal vaults for Alice. |
