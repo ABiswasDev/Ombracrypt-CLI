@@ -9,11 +9,11 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Platform-Linux%20%7C%20macOS%20%7C%20Windows-2d2d2d?style=for-the-badge" alt="Platform">
-  <img src="https://img.shields.io/badge/Security-NIST%20FIPS%20203%20%2B%20X25519-blue?style=for-the-badge" alt="Security">
+  <img src="https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-2d2d2d?style=for-the-badge" alt="Platform">
+  <img src="https://img.shields.io/badge/Security-Post--Quantum%20Hybrid%20KEM-blue?style=for-the-badge" alt="Security">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-CAL--1.0-28a745?style=for-the-badge" alt="License"></a>
-  <img src="https://img.shields.io/badge/Version-v2.0.0-purple?style=for-the-badge" alt="Version">
 </p>
+
 
 ---
 
