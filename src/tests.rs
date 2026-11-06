@@ -667,7 +667,7 @@ fn test_sprint3_obp_and_obk_fingerprints_match_identically() {
             "Public (.obp) and Private (.obk) key fingerprints must match for profile {}",
             profile
         );
-        assert_eq!(fp_pub.len(), 35); // 128-bit format: XXXXXXXX-XXXXXXXX-XXXXXXXX-XXXXXXXX
+        assert_eq!(fp_pub.len(), 35);
     }
 }
 
@@ -1028,10 +1028,6 @@ fn test_sprint6_malicious_tar_setuid_and_setgid_bits_stripped() {
     );
 }
 
-// =========================================================================
-// SPRINT 8 BACKEND INVARIANTS, MID-STREAM CANCELLATION & SCOPED CLEANER TESTS
-// =========================================================================
-
 #[test]
 fn test_sprint8_backend_rejects_empty_master_pin() {
     let (ws, _guard) = create_test_workspace("empty_pin");
@@ -1039,7 +1035,6 @@ fn test_sprint8_backend_rejects_empty_master_pin() {
     let out = ws.join("out");
     fs::create_dir_all(&src).unwrap();
     fs::create_dir_all(&out).unwrap();
-    fs::write(src.join("f.txt"), b"data").unwrap();
 
     let res = encrypt_vault_core(
         None,
@@ -1064,7 +1059,6 @@ fn test_sprint8_backend_rejects_identical_master_and_duress() {
     let out = ws.join("out");
     fs::create_dir_all(&src).unwrap();
     fs::create_dir_all(&out).unwrap();
-    fs::write(src.join("f.txt"), b"data").unwrap();
 
     let res = encrypt_vault_core(
         None,
@@ -1090,7 +1084,6 @@ fn test_sprint8_mid_stream_cancellation_cleans_staging_artifacts() {
     fs::create_dir_all(&src).unwrap();
     fs::create_dir_all(&out).unwrap();
 
-    // 4 MiB payload spans multiple 1 MiB chunks
     let large_payload = vec![0x33u8; CHUNK_SIZE * 4];
     fs::write(src.join("payload.dat"), &large_payload).unwrap();
 
@@ -1099,7 +1092,6 @@ fn test_sprint8_mid_stream_cancellation_cleans_staging_artifacts() {
 
     let flag_clone = cancel_flag.clone();
     let bg_thread = thread::spawn(move || {
-        // Wait for notification from the first chunk callback
         if rx.recv().is_ok() {
             flag_clone.store(true, Ordering::Relaxed);
         }
@@ -1107,7 +1099,6 @@ fn test_sprint8_mid_stream_cancellation_cleans_staging_artifacts() {
 
     let tx_mutex = std::sync::Mutex::new(Some(tx));
     let progress_cb = move |percent: u8| {
-        // First chunk callback will be >= 30%
         if percent >= 30 {
             if let Ok(mut lock) = tx_mutex.lock() {
                 if let Some(sender) = lock.take() {
@@ -1136,7 +1127,6 @@ fn test_sprint8_mid_stream_cancellation_cleans_staging_artifacts() {
     let err = res.unwrap_err();
     assert_eq!(err, "Operation aborted by user.");
 
-    // Strict filesystem rollback according to true staging artifact naming:
     let obv_path = out.join("src.obv");
     let obk_path = out.join("src.obk");
     let obp_path = out.join("src.obp");
@@ -1223,10 +1213,6 @@ fn test_sprint8_tar_bomb_excessive_directory_depth_rejected() {
         .unwrap_err()
         .contains("path depth exceeds maximum safety limit"));
 }
-
-// =========================================================================
-// SPRINT 9 CANONICAL X-WING SPECIFICATION KAT & DECRYPTION CANCEL TESTS
-// =========================================================================
 
 #[test]
 fn test_sprint9_canonical_xwing_obk_86_bytes_and_seed_decapsulation() {
@@ -1336,7 +1322,6 @@ fn test_sprint9_decryption_cancellation_sanitized_message() {
 
     let tx_mutex = std::sync::Mutex::new(Some(tx));
     let progress_cb = move |percent: u8| {
-        // In decryption, initial setup is 10%, 25%, 40%; first chunk decrypted is > 40%
         if percent > 40 {
             if let Ok(mut lock) = tx_mutex.lock() {
                 if let Some(sender) = lock.take() {
@@ -1364,7 +1349,6 @@ fn test_sprint9_decryption_cancellation_sanitized_message() {
         "Decryption cancel must return concise sanitized error"
     );
 
-    // Strict filesystem rollback: verify no .ombracrypt_stage_* directories remain
     let has_staging_dirs = fs::read_dir(&extract_dir)
         .unwrap()
         .filter_map(|e| e.ok())
@@ -1383,10 +1367,6 @@ fn test_sprint9_decryption_cancellation_sanitized_message() {
         "Extraction directory must be left completely empty upon cancellation"
     );
 }
-
-// =========================================================================
-// SPRINT 10 INDEPENDENT SPECIFICATION REFERENCE KAT
-// =========================================================================
 
 #[test]
 fn test_sprint10_xwing_independent_reference_kat() {
@@ -1461,10 +1441,6 @@ fn test_sprint10_xwing_independent_reference_kat() {
         "Corrupted ciphertext must implicitly reject and produce a distinct shared secret"
     );
 }
-
-// =========================================================================
-// FILESYSTEM ATOMIC NO-REPLACE & SCOPED STAGING REGRESSION SUITE
-// =========================================================================
 
 #[test]
 fn test_fs_guard_atomic_no_replace_publishes_successfully() {
@@ -1692,10 +1668,6 @@ fn test_fs_guard_atomic_dir_publication_rejects_dangling_symlink() {
     assert!(stage_dir.exists());
 }
 
-// =========================================================================
-// CONCURRENT PUBLISHERS, SENTINEL LOCKS & NAMESPACE REGRESSION TESTS
-// =========================================================================
-
 #[test]
 fn test_fs_guard_concurrent_two_publishers_collision_barrier() {
     let (ws, _guard) = create_test_workspace("concurrent_publishers");
@@ -1849,11 +1821,9 @@ fn test_fs_guard_active_locked_extraction_dir_skipped_by_cleaner() {
         .open(&sentinel_path)
         .unwrap();
 
-    // Hold exclusive lock (simulating active extraction writer)
     sentinel_file.try_lock_exclusive().unwrap();
     fs::write(stage_dir.join("extracted_chunk.bin"), vec![0x99u8; 1024]).unwrap();
 
-    // Cleaner must skip the active directory completely
     let (cleaned, freed) = clean_scoped_staging_dir(&ws).unwrap();
     assert_eq!(cleaned, 0, "Active extraction directory must NOT be purged");
     assert_eq!(freed, 0);
@@ -1882,15 +1852,11 @@ fn test_fs_guard_stale_extraction_dir_purged_when_lock_released() {
         .open(&sentinel_path)
         .unwrap();
 
-    // Genuinely acquire exclusive lock before releasing handle
     sentinel_file.try_lock_exclusive().unwrap();
-
     fs::write(stage_dir.join("stale_file.bin"), vec![0x88u8; 2048]).unwrap();
 
-    // Drop lock handle (simulating abandoned or crashed process)
     drop(sentinel_file);
 
-    // Cleaner should now acquire lock and purge the stale extraction folder
     let (cleaned, freed) = clean_scoped_staging_dir(&ws).unwrap();
     assert_eq!(cleaned, 1, "Abandoned extraction directory must be purged");
     assert_eq!(freed, 2048);
@@ -1907,7 +1873,6 @@ fn test_fs_guard_missing_sentinel_extraction_dir_skipped() {
     fs::create_dir_all(&stage_dir).unwrap();
     fs::write(stage_dir.join("unprotected.bin"), vec![0x77u8; 512]).unwrap();
 
-    // Directory without .active.lock sentinel must be skipped (either non-Ombracrypt or in-flight initialization)
     let (cleaned, freed) = clean_scoped_staging_dir(&ws).unwrap();
     assert_eq!(cleaned, 0, "Directory without sentinel must be skipped");
     assert_eq!(freed, 0);
@@ -1984,14 +1949,11 @@ fn test_stream_tar_blocks_reserved_sentinel_path() {
 #[cfg(unix)]
 #[test]
 fn test_fs_guard_stale_open_sentinel_fd_race_rejected() {
-    use std::os::unix::fs::MetadataExt;
-
     let (ws, _guard) = create_test_workspace("stale_fd_race");
     let stage_dir = ws.join(".ombracrypt_stage_88888888888888888888888888888888");
     fs::create_dir_all(&stage_dir).unwrap();
     let sentinel_path = stage_dir.join(".active.lock");
 
-    // 1. Extractor creates and locks sentinel
     let extractor_sentinel = OpenOptions::new()
         .read(true)
         .write(true)
@@ -2000,28 +1962,22 @@ fn test_fs_guard_stale_open_sentinel_fd_race_rejected() {
         .unwrap();
     extractor_sentinel.try_lock_exclusive().unwrap();
 
-    // 2. Cleaner opens sentinel descriptor before it is unlinked
     let cleaner_stale_sentinel = OpenOptions::new()
         .read(true)
         .write(true)
         .open(&sentinel_path)
         .unwrap();
 
-    // 3. Extractor unlinks sentinel and drops lock
     fs::remove_file(&sentinel_path).unwrap();
     drop(extractor_sentinel);
 
-    // 4. Stale handle can now lock the unlinked inode
     assert!(cleaner_stale_sentinel.try_lock_exclusive().is_ok());
-    assert_eq!(cleaner_stale_sentinel.metadata().unwrap().nlink(), 0);
 
-    // 5. Verify post-lock validation directly rejects the stale handle
     assert!(
         !verify_locked_sentinel(&cleaner_stale_sentinel, &sentinel_path),
         "verify_locked_sentinel must reject unlinked file descriptor"
     );
 
-    // 6. Verify cleaner rejects the directory because post-lock validation detects unlinked sentinel
     let (cleaned, freed) = clean_scoped_staging_dir(&ws).unwrap();
     assert_eq!(
         cleaned, 0,
@@ -2057,19 +2013,16 @@ fn test_fs_guard_windows_sentinel_identity_and_replacement() {
         .open(&other_path)
         .unwrap();
 
-    // 1. Valid matching handle and path must verify successfully
     assert!(
         verify_locked_sentinel(&sentinel_file, &sentinel_path),
         "Active locked sentinel must match its valid path on Windows"
     );
 
-    // 2. Mismatched file index must be rejected
     assert!(
         !verify_locked_sentinel(&sentinel_file, &other_path),
         "verify_locked_sentinel must reject mismatched file index on Windows"
     );
 
-    // 3. Nonexistent path must be rejected
     let missing_path = stage_dir.join(".nonexistent.lock");
     assert!(
         !verify_locked_sentinel(&sentinel_file, &missing_path),
@@ -2080,10 +2033,6 @@ fn test_fs_guard_windows_sentinel_identity_and_replacement() {
     drop(other_file);
 }
 
-// =========================================================================
-// OPERATIONAL SECURITY & CLI SIGNAL REGRESSION TESTS
-// =========================================================================
-
 #[test]
 fn test_cleaner_path_normalization_and_deduplication() {
     let (ws, _guard) = create_test_workspace("clean_dedup");
@@ -2092,7 +2041,6 @@ fn test_cleaner_path_normalization_and_deduplication() {
     fs::create_dir_all(&sub1).unwrap();
     fs::create_dir_all(&sub2).unwrap();
 
-    // Create an orphaned staging folder inside sub1 matching the exact 50-byte format (.ombracrypt_stage_<32hex>)
     let stale_stage = sub1.join(".ombracrypt_stage_11112222333344445555666677778888");
     fs::create_dir_all(&stale_stage).unwrap();
     fs::write(stale_stage.join("remnant.bin"), b"stale data").unwrap();
@@ -2103,15 +2051,13 @@ fn test_cleaner_path_normalization_and_deduplication() {
         .unwrap();
     drop(lock_file);
 
-    // Also create a dummy file inside sub1
     let dummy_file = sub1.join("report.txt");
     fs::write(&dummy_file, b"content").unwrap();
 
-    // Emulate the path resolution & deduplication logic from CLI clean:
     let input_dirs = vec![
         sub1.clone(),
-        dummy_file.clone(), // file in sub1 -> resolves to sub1
-        sub1.clone(),       // duplicate
+        dummy_file.clone(),
+        sub1.clone(),
         sub2.clone(),
     ];
 
@@ -2137,7 +2083,6 @@ fn test_cleaner_path_normalization_and_deduplication() {
         }
     }
 
-    // Exactly 2 unique directories should remain: sub1 and sub2
     assert_eq!(
         resolved_dirs.len(),
         2,
@@ -2171,7 +2116,6 @@ fn test_pre_commit_cancellation_barrier_triggers_full_rollback() {
     fs::create_dir_all(&vault_dir).unwrap();
     fs::create_dir_all(&key_dir).unwrap();
 
-    // Single-chunk payload
     fs::write(
         src_dir.join("test.txt"),
         b"Pre-commit cancellation test data",
@@ -2181,8 +2125,6 @@ fn test_pre_commit_cancellation_barrier_triggers_full_rollback() {
     let cancel_token = Arc::new(AtomicBool::new(false));
     let flag_clone = cancel_token.clone();
 
-    // Deterministically trip the cancellation flag ONLY after the final chunk finishes streaming (percent >= 95),
-    // immediately before the atomic publication phase
     let progress_cb = move |percent: u8| {
         if percent >= 95 {
             flag_clone.store(true, Ordering::Relaxed);
@@ -2212,7 +2154,6 @@ fn test_pre_commit_cancellation_barrier_triggers_full_rollback() {
         "Error message must match exact contract: {err}"
     );
 
-    // Verify neither .obv nor .obk exists in the output directories
     let obv_path = vault_dir.join("payload.obv");
     let obk_path = key_dir.join("payload.obk");
     let obp_path = key_dir.join("payload.obp");
@@ -2230,7 +2171,6 @@ fn test_pre_commit_cancellation_barrier_triggers_full_rollback() {
         "Public key file must not be committed upon cancellation"
     );
 
-    // Verify strict filesystem rollback: no .ombracrypt_part_*.part files leaked
     let has_vault_parts = fs::read_dir(&vault_dir)
         .unwrap()
         .filter_map(|e| e.ok())
@@ -2258,8 +2198,6 @@ fn test_pre_commit_cancellation_barrier_triggers_full_rollback() {
     assert_eq!(fs::read_dir(&key_dir).unwrap().count(), 0);
 }
 
-// Verifies CLI-internal format compliance across all 4 cipher/KEM combinations,
-// ensuring self-consistency of key sizes and streaming roundtrips (not external desktop interop).
 #[test]
 fn test_cli_self_roundtrip_all_four_permutations() {
     let (ws, _guard) = create_test_workspace("four_permutations");
@@ -2345,6 +2283,198 @@ fn test_cli_self_roundtrip_all_four_permutations() {
             "Extracted content must match original for {} + {}",
             kem,
             cipher
+        );
+    }
+}
+
+// =========================================================================
+// DIRECTORY-ONLY ENFORCEMENT & CREDENTIAL EDGE-CASE TESTS
+// =========================================================================
+
+#[test]
+fn test_target_path_must_be_directory_and_rejects_files_before_staging() {
+    let (ws, _guard) = create_test_workspace("target_file_rejection");
+    let target_file = ws.join("standalone_document.pdf");
+    let vault_dir = ws.join("vault_out");
+    let key_dir = ws.join("keys_out");
+
+    fs::write(&target_file, b"%PDF-1.4 Mock document").unwrap();
+    fs::create_dir_all(&vault_dir).unwrap();
+    fs::create_dir_all(&key_dir).unwrap();
+
+    let res = encrypt_vault_core(
+        None,
+        target_file.to_str().unwrap(),
+        vault_dir.to_str().unwrap(),
+        key_dir.to_str().unwrap(),
+        false,
+        "xchacha20",
+        "xwing",
+        "ValidMasterPassword123!",
+        "",
+        None,
+    );
+
+    assert!(res.is_err(), "Must reject standalone file target");
+    let err = res.unwrap_err();
+    assert!(
+        err.contains("Target path must be a directory"),
+        "Error message must clearly inform user to provide a directory: {err}"
+    );
+
+    // Verify zero staging files or output files were leaked
+    assert_eq!(
+        fs::read_dir(&vault_dir).unwrap().count(),
+        0,
+        "No vault staging artifacts must be left on file rejection"
+    );
+    assert_eq!(
+        fs::read_dir(&key_dir).unwrap().count(),
+        0,
+        "No key staging artifacts must be left on file rejection"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn test_target_path_rejects_symlink_directory() {
+    let (ws, _guard) = create_test_workspace("symlink_target_dir");
+    let real_dir = ws.join("real_folder");
+    let symlink_dir = ws.join("symlinked_folder");
+    let vault_dir = ws.join("vault_out");
+    let key_dir = ws.join("keys_out");
+
+    fs::create_dir_all(&real_dir).unwrap();
+    fs::write(real_dir.join("test.txt"), b"payload").unwrap();
+    fs::create_dir_all(&vault_dir).unwrap();
+    fs::create_dir_all(&key_dir).unwrap();
+
+    std::os::unix::fs::symlink(&real_dir, &symlink_dir).unwrap();
+
+    let res = encrypt_vault_core(
+        None,
+        symlink_dir.to_str().unwrap(),
+        vault_dir.to_str().unwrap(),
+        key_dir.to_str().unwrap(),
+        false,
+        "xchacha20",
+        "xwing",
+        "ValidMasterPassword123!",
+        "",
+        None,
+    );
+
+    assert!(res.is_err(), "Must reject symlink target directory");
+    let err = res.unwrap_err();
+    assert!(
+        err.contains("cannot be a symlink"),
+        "Error must explicitly cite symlink rejection: {err}"
+    );
+}
+
+#[test]
+fn test_password_preserves_leading_and_trailing_whitespace() {
+    let (ws, _guard) = create_test_workspace("spaced_password");
+    let src_dir = ws.join("payload");
+    let vault_dir = ws.join("vault");
+    let key_dir = ws.join("keys");
+    let extract_dir = ws.join("out");
+
+    fs::create_dir_all(&src_dir).unwrap();
+    fs::create_dir_all(&vault_dir).unwrap();
+    fs::create_dir_all(&key_dir).unwrap();
+    fs::create_dir_all(&extract_dir).unwrap();
+
+    let payload = b"Password whitespace preservation verification";
+    fs::write(src_dir.join("data.txt"), payload).unwrap();
+
+    // Password with intentional leading and trailing spaces
+    let spaced_password = "   Passphrase With Intentional Spaces   ";
+
+    encrypt_vault_core(
+        None,
+        src_dir.to_str().unwrap(),
+        vault_dir.to_str().unwrap(),
+        key_dir.to_str().unwrap(),
+        false,
+        "xchacha20",
+        "xwing",
+        spaced_password,
+        "",
+        None,
+    )
+    .expect("Encryption with spaced password should succeed");
+
+    let obv = vault_dir.join("payload.obv");
+    let obk = key_dir.join("payload.obk");
+
+    // Decryption with trimmed password MUST fail
+    let trimmed_attempt = decrypt_vault_core(
+        None,
+        obv.to_str().unwrap(),
+        Some(obk.to_str().unwrap()),
+        extract_dir.to_str().unwrap(),
+        "Passphrase With Intentional Spaces",
+        None,
+    );
+    assert!(
+        trimmed_attempt.is_err(),
+        "Decryption must fail when spaces are stripped"
+    );
+
+    // Decryption with the exact spaced password MUST succeed
+    let exact_attempt = decrypt_vault_core(
+        None,
+        obv.to_str().unwrap(),
+        Some(obk.to_str().unwrap()),
+        extract_dir.to_str().unwrap(),
+        spaced_password,
+        None,
+    );
+    assert!(
+        exact_attempt.is_ok(),
+        "Decryption must succeed with preserved whitespace: {:?}",
+        exact_attempt
+    );
+
+    let recovered = fs::read(extract_dir.join("payload/data.txt")).unwrap();
+    assert_eq!(recovered, payload);
+}
+
+#[test]
+fn test_password_empty_or_whitespace_only_rejected() {
+    let (ws, _guard) = create_test_workspace("blank_passwords");
+    let src_dir = ws.join("payload");
+    let out_dir = ws.join("out");
+
+    fs::create_dir_all(&src_dir).unwrap();
+    fs::create_dir_all(&out_dir).unwrap();
+
+    let invalid_passwords = ["", "   ", "\t", "\n", "\r\n", " \t \n "];
+
+    for bad_pass in invalid_passwords {
+        let res = encrypt_vault_core(
+            None,
+            src_dir.to_str().unwrap(),
+            out_dir.to_str().unwrap(),
+            out_dir.to_str().unwrap(),
+            false,
+            "xchacha20",
+            "xwing",
+            bad_pass,
+            "",
+            None,
+        );
+        assert!(
+            res.is_err(),
+            "Empty or whitespace-only password '{:?}' must be rejected",
+            bad_pass
+        );
+        let err = res.unwrap_err();
+        assert!(
+            err.contains("Master Password cannot be empty or whitespace only"),
+            "Error contract mismatch for '{:?}': {err}",
+            bad_pass
         );
     }
 }

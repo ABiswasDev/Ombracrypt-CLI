@@ -15,7 +15,7 @@ use zeroize::{Zeroize, Zeroizing};
 #[command(
     about = "Offline Post-Quantum Hybrid Cryptographic Vault for the Terminal",
     long_about = "Ombracrypt is a local-first, zero-escrow post-quantum cryptographic vault engineered\n\
-                  to protect files against contemporary interception and 'Harvest Now, Decrypt Later' (HNDL) attacks.\n\
+                  to protect directories against contemporary interception and 'Harvest Now, Decrypt Later' (HNDL) attacks.\n\
                   It combines hybrid ML-KEM with classical X25519 and bounded in-memory AEAD streaming."
 )]
 struct Cli {
@@ -67,9 +67,9 @@ enum InspectMode {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Encrypt a file or directory into a Quantum-Safe Vault (.obv)
+    /// Encrypt a directory into a Quantum-Safe Vault (.obv)
     Encrypt {
-        /// Path to the target file or directory
+        /// Path to the target directory to encrypt
         #[arg(short, long)]
         target: PathBuf,
 
@@ -185,7 +185,7 @@ enum Commands {
         #[arg(short, long, value_enum)]
         mode: InspectMode,
 
-        /// Path to the source target (folder/file to encrypt, or .obv vault to decrypt)
+        /// Path to the source target (directory to encrypt, or .obv vault to decrypt)
         #[arg(short, long)]
         target: PathBuf,
 
@@ -251,7 +251,7 @@ fn fetch_credential(
     default_env: &str,
     is_optional: bool,
 ) -> Result<Zeroizing<String>, String> {
-    // 1. Direct file input
+    // 1. Direct file input (strips strictly trailing \r and \n without corrupting whitespace)
     if let Some(path) = file_path {
         let mut raw_bytes = std::fs::read(path)
             .map_err(|e| format!("Failed to read credential file '{}': {}", path.display(), e))?;
@@ -402,7 +402,6 @@ fn run() -> Result<(), String> {
                 k_dir.to_string_lossy().to_string()
             };
 
-            // Ingest Master Password
             let main_pin = fetch_credential(
                 "Enter Master Password:",
                 Some("Confirm Master Password:"),
@@ -412,7 +411,6 @@ fn run() -> Result<(), String> {
                 false,
             )?;
 
-            // Ingest Deception Passcode (only if generating keypair)
             let deception_passcode = if use_existing_public_key {
                 Zeroizing::new(String::new())
             } else {
@@ -430,7 +428,6 @@ fn run() -> Result<(), String> {
                 p
             };
 
-            // Set up cooperative signal cancellation handler immediately prior to encryption
             let cancel_flag = Arc::new(AtomicBool::new(false));
             let flag_clone = cancel_flag.clone();
             ctrlc::set_handler(move || {
@@ -507,7 +504,6 @@ fn run() -> Result<(), String> {
                 false,
             )?;
 
-            // Set up cooperative signal cancellation handler immediately prior to decryption
             let cancel_flag = Arc::new(AtomicBool::new(false));
             let flag_clone = cancel_flag.clone();
             ctrlc::set_handler(move || {

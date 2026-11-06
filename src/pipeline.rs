@@ -1,5 +1,5 @@
 use rand::{rngs::OsRng, RngCore};
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::{Read, Seek, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
@@ -118,11 +118,29 @@ pub fn encrypt_vault_core(
     deception_passcode: &str,
     cancellation_token: Option<Arc<AtomicBool>>,
 ) -> Result<String, String> {
+    // 1. Master Password validation
     if main_pin.trim().is_empty() {
         return Err("Security Error: Master Password cannot be empty or whitespace only.".to_string());
     }
     if !deception_passcode.trim().is_empty() && main_pin == deception_passcode {
         return Err("Security Error: Deception passcode cannot match Master Password.".to_string());
+    }
+
+    // 2. Target Path validation (Directory-Only Alignment with Desktop v2)
+    let target_path_obj = Path::new(target_path);
+    if !target_path_obj.exists() {
+        return Err("Selected source path does not exist.".to_string());
+    }
+    let target_lmeta = fs::symlink_metadata(target_path_obj)
+        .map_err(|e| format!("Failed to inspect target path: {}", e))?;
+    if target_lmeta.file_type().is_symlink() {
+        return Err("Security Error: Target path cannot be a symlink.".to_string());
+    }
+    if !target_path_obj.is_dir() {
+        return Err(
+            "Target path must be a directory. Encrypting standalone files is not supported in v2.0.0; please place the file inside a directory."
+                .to_string(),
+        );
     }
 
     emit_progress(progress, 5)?;
@@ -136,7 +154,6 @@ pub fn encrypt_vault_core(
         return Err(format!("Security Error: Unsupported KEM algorithm '{}'.", kem));
     }
 
-    let target_path_obj = Path::new(target_path);
     let vault_out_obj = Path::new(vault_output_dir);
 
     let check =
@@ -492,8 +509,6 @@ pub fn decrypt_vault_core(
         }
     }
 
-    // Release and unlink the internal .active.lock sentinel immediately before directory rename.
-    // If removal fails, this call returns Err and dir_guard cleans up the entire tree.
     dir_guard.release_sentinel()?;
 
     atomic_publish_dir_noreplace(&stage_dir, &final_extract_dir)
