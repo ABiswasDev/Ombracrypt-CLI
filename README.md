@@ -24,7 +24,7 @@
 Operating offline with **zero telemetry, no cloud dependencies, and zero key custody**, Ombracrypt CLI maintains **100% bit-for-bit wire-format parity** with the [Ombracrypt Desktop Application](https://github.com/ABiswasDev/Ombracrypt). Vaults (`.obv`) and keys (`.obp`/`.obk`) created in the CLI can be authenticated and extracted in the GUI, and vice versa.
 
 ---
-
+ 
 ## Key Architectural Capabilities
 
 * **Dual-Profile Post-Quantum Hybrid KEM:**
