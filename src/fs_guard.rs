@@ -112,7 +112,9 @@ pub fn verify_locked_sentinel(sentinel_file: &File, sentinel_path: &Path) -> boo
         use std::os::windows::io::AsRawHandle;
 
         let locked_h = sentinel_file.as_raw_handle() as windows_sys::Win32::Foundation::HANDLE;
-        let mut locked_info = MaybeUninit::<windows_sys::Win32::Storage::FileSystem::BY_HANDLE_FILE_INFORMATION>::uninit();
+        let mut locked_info = MaybeUninit::<
+            windows_sys::Win32::Storage::FileSystem::BY_HANDLE_FILE_INFORMATION,
+        >::uninit();
         let success = unsafe {
             windows_sys::Win32::Storage::FileSystem::GetFileInformationByHandle(
                 locked_h,
@@ -134,7 +136,9 @@ pub fn verify_locked_sentinel(sentinel_file: &File, sentinel_path: &Path) -> boo
         };
 
         let recheck_h = recheck_file.as_raw_handle() as windows_sys::Win32::Foundation::HANDLE;
-        let mut recheck_info = MaybeUninit::<windows_sys::Win32::Storage::FileSystem::BY_HANDLE_FILE_INFORMATION>::uninit();
+        let mut recheck_info = MaybeUninit::<
+            windows_sys::Win32::Storage::FileSystem::BY_HANDLE_FILE_INFORMATION,
+        >::uninit();
         let success = unsafe {
             windows_sys::Win32::Storage::FileSystem::GetFileInformationByHandle(
                 recheck_h,
@@ -168,7 +172,10 @@ pub fn verify_locked_sentinel(sentinel_file: &File, sentinel_path: &Path) -> boo
 pub fn unique_staging_path(dir: &Path, _base_filename: &str) -> PathBuf {
     let mut rnd = [0u8; 16];
     OsRng.fill_bytes(&mut rnd);
-    dir.join(format!(".ombracrypt_part_{:032x}.part", u128::from_be_bytes(rnd)))
+    dir.join(format!(
+        ".ombracrypt_part_{:032x}.part",
+        u128::from_be_bytes(rnd)
+    ))
 }
 
 /// Creates a staging file for private keys (.obk) with strict 0600 (owner-only) permissions on Unix
@@ -186,7 +193,10 @@ pub fn create_private_staging_file(path: &Path) -> Result<File, String> {
     if let Err(e) = file.try_lock_exclusive() {
         drop(file);
         let _ = fs::remove_file(path);
-        return Err(format!("Failed to acquire exclusive lock on staging file: {}", e));
+        return Err(format!(
+            "Failed to acquire exclusive lock on staging file: {}",
+            e
+        ));
     }
     Ok(file)
 }
@@ -201,14 +211,20 @@ pub fn create_public_staging_file(path: &Path) -> Result<File, String> {
     if let Err(e) = file.try_lock_exclusive() {
         drop(file);
         let _ = fs::remove_file(path);
-        return Err(format!("Failed to acquire exclusive lock on staging file: {}", e));
+        return Err(format!(
+            "Failed to acquire exclusive lock on staging file: {}",
+            e
+        ));
     }
     Ok(file)
 }
 
 /// Creates a CSPRNG-unique extraction staging directory with restrictive 0700 permissions on Unix
 /// and initializes an exclusively locked .active.lock sentinel inside it.
-pub fn create_secure_staging_dir(out_dir: &Path, _file_stem: &str) -> Result<(PathBuf, File), String> {
+pub fn create_secure_staging_dir(
+    out_dir: &Path,
+    _file_stem: &str,
+) -> Result<(PathBuf, File), String> {
     let mut rnd = [0u8; 16];
     OsRng.fill_bytes(&mut rnd);
     let stage_dir = out_dir.join(format!(
@@ -246,7 +262,10 @@ pub fn create_secure_staging_dir(out_dir: &Path, _file_stem: &str) -> Result<(Pa
     if let Err(e) = sentinel_file.try_lock_exclusive() {
         drop(sentinel_file);
         let _ = fs::remove_dir_all(&stage_dir);
-        return Err(format!("Failed to acquire exclusive lock on staging directory sentinel: {}", e));
+        return Err(format!(
+            "Failed to acquire exclusive lock on staging directory sentinel: {}",
+            e
+        ));
     }
 
     Ok((stage_dir, sentinel_file))
@@ -292,7 +311,11 @@ pub fn clean_scoped_staging_dir(dir: &Path) -> Result<(usize, u64), String> {
             }
 
             // Attempt to open the sentinel file
-            let Ok(sentinel_file) = OpenOptions::new().read(true).write(true).open(&sentinel_path) else {
+            let Ok(sentinel_file) = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(&sentinel_path)
+            else {
                 continue;
             };
 
@@ -328,7 +351,9 @@ pub fn clean_scoped_staging_dir(dir: &Path) -> Result<(usize, u64), String> {
                             match sub_res {
                                 Ok(sub_entry) => {
                                     let sub_path = sub_entry.path();
-                                    if sub_path.file_name().and_then(|s| s.to_str()) != Some(".active.lock") {
+                                    if sub_path.file_name().and_then(|s| s.to_str())
+                                        != Some(".active.lock")
+                                    {
                                         let del_res = if sub_path.is_dir() {
                                             fs::remove_dir_all(&sub_path)
                                         } else {
@@ -549,7 +574,10 @@ pub fn atomic_publish_dir_noreplace(src: &Path, dst: &Path) -> Result<(), String
     // Use platform-native atomic no-replace publication
     atomic_publish_noreplace_internal(src, dst, false).map_err(|e| {
         if e.contains("Refusing to overwrite existing") {
-            format!("Refusing to overwrite existing destination: {}", dst.display())
+            format!(
+                "Refusing to overwrite existing destination: {}",
+                dst.display()
+            )
         } else {
             e
         }
@@ -633,22 +661,19 @@ pub fn atomic_publish_noreplace_internal(
         let c_dst = CString::new(dst.as_os_str().as_bytes())
             .map_err(|e| format!("Invalid path encoding for destination: {}", e))?;
 
-        let ret = unsafe {
-            libc::renamex_np(c_src.as_ptr(), c_dst.as_ptr(), libc::RENAME_EXCL)
-        };
+        let ret = unsafe { libc::renamex_np(c_src.as_ptr(), c_dst.as_ptr(), libc::RENAME_EXCL) };
 
         if ret != 0 {
             let err = std::io::Error::last_os_error();
             return match err.raw_os_error() {
-                Some(libc::EEXIST) => {
-                    Err(format!("Refusing to overwrite existing file: {}", dst.display()))
-                }
-                Some(libc::ENOTSUP) | Some(libc::ENOSYS) => {
-                    Err(format!(
-                        "Target filesystem does not support atomic no-replace publication: {}",
-                        dst.display()
-                    ))
-                }
+                Some(libc::EEXIST) => Err(format!(
+                    "Refusing to overwrite existing file: {}",
+                    dst.display()
+                )),
+                Some(libc::ENOTSUP) | Some(libc::ENOSYS) => Err(format!(
+                    "Target filesystem does not support atomic no-replace publication: {}",
+                    dst.display()
+                )),
                 _ => Err(format!(
                     "Failed to commit artifact {} via atomic rename: {}",
                     dst.display(),
@@ -663,8 +688,16 @@ pub fn atomic_publish_noreplace_internal(
     {
         use std::os::windows::ffi::OsStrExt;
 
-        let wide_src: Vec<u16> = src.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
-        let wide_dst: Vec<u16> = dst.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+        let wide_src: Vec<u16> = src
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        let wide_dst: Vec<u16> = dst
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
 
         let success = unsafe {
             windows_sys::Win32::Storage::FileSystem::MoveFileExW(
@@ -679,9 +712,10 @@ pub fn atomic_publish_noreplace_internal(
             const ERROR_FILE_EXISTS: u32 = 80;
             const ERROR_ALREADY_EXISTS: u32 = 183;
             return match err_code {
-                ERROR_FILE_EXISTS | ERROR_ALREADY_EXISTS => {
-                    Err(format!("Refusing to overwrite existing file: {}", dst.display()))
-                }
+                ERROR_FILE_EXISTS | ERROR_ALREADY_EXISTS => Err(format!(
+                    "Refusing to overwrite existing file: {}",
+                    dst.display()
+                )),
                 _ => Err(format!(
                     "Failed to commit artifact {} via MoveFileExW (error code {}): {}",
                     dst.display(),

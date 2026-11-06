@@ -98,7 +98,9 @@ pub fn compute_hybrid_combiner(
 /// Computes a 128-bit human-verifiable SHA-256 fingerprint (XXXXXXXX-XXXXXXXX-XXXXXXXX-XXXXXXXX) of a canonical .obp Public Key
 pub fn compute_obp_fingerprint(obp_bytes: &[u8]) -> Result<String, String> {
     if obp_bytes.len() < 6 + 32 || &obp_bytes[..5] != OBP_MAGIC {
-        return Err("Invalid Public Key (.obp): Unrecognized header or corrupted file.".to_string());
+        return Err(
+            "Invalid Public Key (.obp): Unrecognized header or corrupted file.".to_string(),
+        );
     }
     let kem_id = obp_bytes[5];
     let expected_len = match kem_id {
@@ -107,9 +109,7 @@ pub fn compute_obp_fingerprint(obp_bytes: &[u8]) -> Result<String, String> {
         _ => return Err("Invalid Public Key (.obp): Unsupported KEM profile ID.".to_string()),
     };
     if obp_bytes.len() != expected_len {
-        return Err(
-            "Invalid Public Key (.obp): File size does not match KEM profile.".to_string(),
-        );
+        return Err("Invalid Public Key (.obp): File size does not match KEM profile.".to_string());
     }
 
     let mut hasher = Sha256::new();
@@ -357,7 +357,10 @@ pub fn generate_keypair_blobs(
 
             Ok((obp_bytes, obk_bytes, kem_id))
         }
-        _ => Err(format!("Security Error: Unsupported KEM algorithm '{}'.", kem_choice)),
+        _ => Err(format!(
+            "Security Error: Unsupported KEM algorithm '{}'.",
+            kem_choice
+        )),
     }
 }
 
@@ -366,8 +369,13 @@ pub fn encapsulate_xwing_deterministic(
     obp_bytes: &[u8],
     ephemeral_seed: &[u8; 64],
 ) -> Result<(Vec<u8>, Zeroizing<[u8; 32]>), String> {
-    if obp_bytes.len() != 6 + ml_kem_768::EK_LEN + 32 || &obp_bytes[..5] != OBP_MAGIC || obp_bytes[5] != 1 {
-        return Err("Invalid X-Wing Public Key (.obp) for deterministic encapsulation.".to_string());
+    if obp_bytes.len() != 6 + ml_kem_768::EK_LEN + 32
+        || &obp_bytes[..5] != OBP_MAGIC
+        || obp_bytes[5] != 1
+    {
+        return Err(
+            "Invalid X-Wing Public Key (.obp) for deterministic encapsulation.".to_string(),
+        );
     }
 
     let key_body = &obp_bytes[6..];
@@ -411,9 +419,13 @@ pub fn encapsulate_xwing_deterministic(
 }
 
 /// Encapsulates a hybrid shared secret against a serialized .obp Public Key using the X-Wing SHA3-256 combiner
-pub fn encapsulate_with_obp(obp_bytes: &[u8]) -> Result<(Vec<u8>, Zeroizing<[u8; 32]>, u8), String> {
+pub fn encapsulate_with_obp(
+    obp_bytes: &[u8],
+) -> Result<(Vec<u8>, Zeroizing<[u8; 32]>, u8), String> {
     if obp_bytes.len() < 6 + 32 || &obp_bytes[..5] != OBP_MAGIC {
-        return Err("Invalid Public Key (.obp): Unrecognized header or corrupted file.".to_string());
+        return Err(
+            "Invalid Public Key (.obp): Unrecognized header or corrupted file.".to_string(),
+        );
     }
 
     let kem_id = obp_bytes[5];

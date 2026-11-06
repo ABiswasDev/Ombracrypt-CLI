@@ -121,9 +121,7 @@ pub fn parse_and_validate_header(vault_file: &mut File) -> Result<ValidatedHeade
     let expected_ct_len = match kem_id {
         1 => XWING_CT_LEN,
         2 => CYPHERPUNK_CT_LEN,
-        _ => {
-            return Err("Security Error: Unsupported KEM profile ID in vault header.".to_string())
-        }
+        _ => return Err("Security Error: Unsupported KEM profile ID in vault header.".to_string()),
     };
 
     let mut nonce_bytes = vec![0u8; nonce_len];
@@ -203,7 +201,9 @@ pub fn sanitize_tar_path(entry_path: &Path) -> Result<PathBuf, String> {
     }
     // Reserve .active.lock sentinel name to prevent malicious archives from interfering with directory locking
     if clean == Path::new(".active.lock") || clean.starts_with(".active.lock") {
-        return Err("Security Error: Archive contains reserved staging path '.active.lock'.".to_string());
+        return Err(
+            "Security Error: Archive contains reserved staging path '.active.lock'.".to_string(),
+        );
     }
     Ok(clean)
 }

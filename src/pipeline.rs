@@ -120,7 +120,9 @@ pub fn encrypt_vault_core(
 ) -> Result<String, String> {
     // 1. Master Password validation
     if main_pin.trim().is_empty() {
-        return Err("Security Error: Master Password cannot be empty or whitespace only.".to_string());
+        return Err(
+            "Security Error: Master Password cannot be empty or whitespace only.".to_string(),
+        );
     }
     if !deception_passcode.trim().is_empty() && main_pin == deception_passcode {
         return Err("Security Error: Deception passcode cannot match Master Password.".to_string());
@@ -148,10 +150,18 @@ pub fn encrypt_vault_core(
     let (cipher_id, nonce_len) = match cipher {
         "xchacha20" => (1u8, 24usize),
         "aes256gcm" => (2u8, 12usize),
-        _ => return Err(format!("Security Error: Unsupported cipher algorithm '{}'.", cipher)),
+        _ => {
+            return Err(format!(
+                "Security Error: Unsupported cipher algorithm '{}'.",
+                cipher
+            ))
+        }
     };
     if !use_existing_public_key && kem != "xwing" && kem != "cypherpunk" {
-        return Err(format!("Security Error: Unsupported KEM algorithm '{}'.", kem));
+        return Err(format!(
+            "Security Error: Unsupported KEM algorithm '{}'.",
+            kem
+        ));
     }
 
     let vault_out_obj = Path::new(vault_output_dir);
@@ -190,8 +200,7 @@ pub fn encrypt_vault_core(
         let (ct, ss, kid) = crypto::encapsulate_with_obp(&obp_raw)?;
         (ct, ss, kid, fp, None)
     } else {
-        let (obp_bytes, obk_bytes, kid) =
-            crypto::generate_keypair_blobs(kem, deception_passcode)?;
+        let (obp_bytes, obk_bytes, kid) = crypto::generate_keypair_blobs(kem, deception_passcode)?;
         let fp = crypto::compute_obp_fingerprint(&obp_bytes)?;
         let (ct, ss, _) = crypto::encapsulate_with_obp(&obp_bytes)?;
         (ct, ss, kid, fp, Some((obp_bytes, obk_bytes)))
@@ -281,7 +290,10 @@ pub fn encrypt_vault_core(
         if s.contains("Operation aborted by user") {
             return Err("Operation aborted by user.".to_string());
         }
-        return Err(format!("Failed to stream folder into encrypted archive: {}", s));
+        return Err(format!(
+            "Failed to stream folder into encrypted archive: {}",
+            s
+        ));
     }
 
     let encrypt_writer = match tar_builder.into_inner() {
@@ -404,12 +416,8 @@ pub fn decrypt_vault_core(
 
     emit_progress(progress, 25)?;
 
-    let (duress_triggered, ss_opt) = crypto::decapsulate_with_obk(
-        header.kem_id,
-        &full_obk_bytes,
-        &header.ct_bytes,
-        main_pin,
-    )?;
+    let (duress_triggered, ss_opt) =
+        crypto::decapsulate_with_obk(header.kem_id, &full_obk_bytes, &header.ct_bytes, main_pin)?;
 
     if duress_triggered {
         return deception::trigger_dummy_scramble(key_path_str);

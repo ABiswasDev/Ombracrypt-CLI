@@ -1,1 +1,24 @@
-/target
+# Build output
+/target/
+**/*.rs.bk
+
+# IDEs & Editors
+.vscode/
+.idea/
+*.swp
+*~
+
+# Operating System Files
+.DS_Store
+Thumbs.db
+
+# Backup & Scratch Files
+*.bak
+*.tmp
+*.orig
+/tmp/
+
+# Sensitive local credentials (prevent accidental secret leaks)
+*.pass
+*.secret
+*credentials*

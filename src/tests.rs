@@ -2054,12 +2054,7 @@ fn test_cleaner_path_normalization_and_deduplication() {
     let dummy_file = sub1.join("report.txt");
     fs::write(&dummy_file, b"content").unwrap();
 
-    let input_dirs = vec![
-        sub1.clone(),
-        dummy_file.clone(),
-        sub1.clone(),
-        sub2.clone(),
-    ];
+    let input_dirs = vec![sub1.clone(), dummy_file.clone(), sub1.clone(), sub2.clone()];
 
     let mut resolved_dirs: Vec<PathBuf> = Vec::new();
     for path in input_dirs {
