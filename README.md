@@ -33,9 +33,9 @@ Operating offline with **zero telemetry, no cloud dependencies, and zero key cus
 * **Folder-Centric In-Memory Streaming:** Streams directory trees directly through bounded in-process buffers in chunks up to $1\text{ MiB}$. Eliminates unencrypted intermediate TAR staging archives on disk during encryption.
 * **Cryptographic Artifact Separation:**
   * `.obv` **(Encrypted Vault):** Authenticated ciphertext stream bound to header metadata via Additional Authenticated Data (AAD).
-  * `.obk` **(Private Decapsulation Key):** Offline decapsulation key generated with `0600` owner-only permissions.
+* `.obk` **(Private Decapsulation Key):** Offline decapsulation key generated with `0600` owner-only permissions.
     * **X-Wing profile:** Exactly **86 bytes** (5 B magic + 1 B kem_id + 16 B salt + 32 B seed + 32 B phantom block).
-    * **Cypherpunk profile:** Exactly **3,254 bytes** (5 B magic + 1 B kem_id + 16 B salt + 3,168 B ML-KEM-1024 d_k + 32 B X25519 s_k + 32 B phantom block).
+    * **Cypherpunk profile:** Exactly **3,254 bytes** (5 B magic + 1 B kem_id + 16 B salt + 3,168 B ML-KEM-1024 d<sub>k</sub> + 32 B X25519 s<sub>k</sub> + 32 B phantom block).
   * `.obp` **(Public Sealing Key):** Reusable public key allowing one-way vault encryption for individual or group recipients without granting decryption rights (1,222 bytes for `xwing`, 1,606 bytes for `cypherpunk`).
 * **Cooperative Signal Cancellation & Atomic Rollback:** Intercepts operating system termination signals non-blockingly via `ctrlc` and an atomic cancellation barrier.
   * **Unix (Linux/macOS):** Handles `SIGINT` (Ctrl+C), `SIGTERM`, and `SIGHUP` via `ctrlc`'s `termination` feature.
