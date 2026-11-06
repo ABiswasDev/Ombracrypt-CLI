@@ -23,7 +23,7 @@ jobs:
             binary: ombracrypt
             asset_ext: tar.gz
           - name: macos-x64
-            os: macos-13
+            os: macos-latest
             target: x86_64-apple-darwin
             binary: ombracrypt
             asset_ext: tar.gz
