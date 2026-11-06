@@ -34,9 +34,9 @@ Operating offline with **zero telemetry, no cloud dependencies, and zero key cus
 * **Cryptographic Artifact Separation:**
   * `.obv` **(Encrypted Vault):** Authenticated ciphertext stream bound to header metadata via Additional Authenticated Data (AAD).
   * `.obk` **(Private Decapsulation Key):** Offline decapsulation key generated with `0600` owner-only permissions.
-    * **X-Wing profile:** Exactly **86 bytes** ($5\text{ B magic} + 1\text{ B kem\_id} + 16\text{ B salt} + 32\text{ B seed} + 32\text{ B phantom block}$).
-    * **Cypherpunk profile:** Exactly **3,254 bytes** ($5\text{ B magic} + 1\text{ B kem\_id} + 16\text{ B salt} + 3{,}168\text{ B ML-KEM-1024 } d_k + 32\text{ B X25519 } s_k + 32\text{ B phantom block}$).
-  * `.obp` **(Public Sealing Key):** Reusable public key allowing one-way vault encryption for individual or group recipients without granting decryption rights ($1{,}222\text{ bytes}$ for `xwing`, $1{,}606\text{ bytes}$ for `cypherpunk`).
+    * **X-Wing profile:** Exactly **86 bytes** (5 B magic + 1 B kem_id + 16 B salt + 32 B seed + 32 B phantom block).
+    * **Cypherpunk profile:** Exactly **3,254 bytes** (5 B magic + 1 B kem_id + 16 B salt + 3,168 B ML-KEM-1024 d_k + 32 B X25519 s_k + 32 B phantom block).
+  * `.obp` **(Public Sealing Key):** Reusable public key allowing one-way vault encryption for individual or group recipients without granting decryption rights (1,222 bytes for `xwing`, 1,606 bytes for `cypherpunk`).
 * **Cooperative Signal Cancellation & Atomic Rollback:** Intercepts operating system termination signals non-blockingly via `ctrlc` and an atomic cancellation barrier.
   * **Unix (Linux/macOS):** Handles `SIGINT` (Ctrl+C), `SIGTERM`, and `SIGHUP` via `ctrlc`'s `termination` feature.
   * **Windows:** Handles Console Control Events (`CTRL_C_EVENT`, `CTRL_CLOSE_EVENT`).
